@@ -7,7 +7,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /smartstrm ./cmd/smartstrm
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata ffmpeg && adduser -D -u 10001 smartstrm
 COPY --from=build /smartstrm /usr/local/bin/smartstrm
 COPY LICENSE /usr/share/licenses/smartstrm/LICENSE

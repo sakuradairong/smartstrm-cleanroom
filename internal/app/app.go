@@ -31,14 +31,15 @@ import (
 )
 
 type App struct {
-	config   config.Config
-	storages map[string]storage.Storage
-	manager  *task.Manager
-	tmdb     *tmdb.Client
-	history  *history.Store
-	uiHTML   string
-	configMu sync.Mutex
-	handler  http.Handler
+	config     config.Config
+	storages   map[string]storage.Storage
+	manager    *task.Manager
+	tmdb       *tmdb.Client
+	history    *history.Store
+	uiHTML     string
+	spaHandler http.Handler
+	configMu   sync.Mutex
+	handler    http.Handler
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -74,7 +75,7 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, uiHTML: uiHTML}
+	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, uiHTML: uiHTML, spaHandler: embeddedSPA().handler()}
 	application.handler = application.routes()
 	return application, nil
 }
@@ -85,6 +86,7 @@ func (a *App) Handler() http.Handler           { return a.handler }
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /", a.basicAuth(http.HandlerFunc(a.home)))
+	mux.Handle("GET /ui/new/", a.basicAuth(http.StripPrefix("/ui/new", a.spaHandler)))
 	mux.HandleFunc("GET /robots.txt", robots)
 	mux.HandleFunc("GET /favicon.ico", emptyFavicon)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Button, Input, Modal, Popconfirm, Select, Space, Table, Typography } from 'antd'
 import type { TableProps } from 'antd'
 import { deleteJSON, getJSON, postJSON } from '../api/client'
-import type { StorageEntry, StorageSummary } from '../api/types'
-import EntryIcon from '../components/EntryIcon'
+import type { MatchingTask, StorageEntry, StorageSummary } from '../api/types'
+import ContextMenu from '../components/ContextMenu'
+import EntryIcon, { isMediaEntry } from '../components/EntryIcon'
 
 export const collator = new Intl.Collator('zh', { numeric: true, sensitivity: 'base' })
 
@@ -157,16 +158,55 @@ export default function StorageBrowserPage() {
   const [renameTarget, setRenameTarget] = useState<StorageEntry | null>(null)
   const [moveTarget, setMoveTarget] = useState<StorageEntry | null>(null)
   const [mkdirOpen, setMkdirOpen] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: StorageEntry } | null>(null)
+  const [matchingTasks, setMatchingTasks] = useState<MatchingTask[]>([])
+  // browseSeq：并发 browse 最新者胜，陈旧响应不得覆盖更新的 entries/path。
+  const browseSeq = useRef(0)
+  // navRef 同步记录当前位置，对应旧 UI 的 pathInput.value / storageSelect.value，
+  // 供 matching-tasks 响应返回时做陈旧守卫。
+  const navRef = useRef({ storageId: '', path: '/' })
+
+  // 与旧 loadCurrentTasks 一致：先隐藏按钮，响应返回时若存储/路径已变则丢弃，失败保持隐藏。
+  const loadCurrentTasks = async (remotePath: string, id: string) => {
+    setMatchingTasks([])
+    try {
+      const matches = await getJSON<MatchingTask[]>(
+        `/api/storages/${encodeURIComponent(id)}/matching-tasks?path=${encodeURIComponent(remotePath)}`,
+      )
+      const current = navRef.current
+      if (current.path !== remotePath || current.storageId !== id) return
+      setMatchingTasks(matches)
+    } catch {
+      // 失败时保持“运行当前”隐藏（旧行为）
+    }
+  }
 
   const browse = async (nextPath: string, id = storageId) => {
     if (!id) return
+    const seq = ++browseSeq.current
     try {
       const list = await getJSON<StorageEntry[]>(
         `/api/storages/${encodeURIComponent(id)}/entries?path=${encodeURIComponent(nextPath)}`,
       )
+      if (seq !== browseSeq.current) return // 已有更新的浏览请求，丢弃陈旧响应
+      navRef.current = { storageId: id, path: nextPath }
       setEntries(list)
       setPath(nextPath)
       setPathInput(nextPath)
+      await loadCurrentTasks(nextPath, id)
+    } catch (err) {
+      if (seq !== browseSeq.current) return
+      message.error((err as Error).message)
+    }
+  }
+
+  // 与旧 runCurrentDirectory 一致：始终运行第一个匹配任务，body 携带当前目录路径。
+  const runCurrent = async () => {
+    const task = matchingTasks[0]
+    if (!task) return
+    try {
+      await postJSON(`/api/tasks/${encodeURIComponent(task.id)}/run`, { path })
+      message.success(`已将 ${task.name || task.id} 的当前目录加入队列`)
     } catch (err) {
       message.error((err as Error).message)
     }
@@ -366,6 +406,8 @@ export default function StorageBrowserPage() {
           value={storageId || undefined}
           options={storages.map((s) => ({ value: s.id, label: `${s.id} (${s.type})` }))}
           onChange={(id) => {
+            // 存储立即切换（与旧 storageSelect.value 语义一致），browse 成功后 navRef 再整体更新
+            navRef.current = { storageId: id, path: navRef.current.path }
             setStorageId(id)
             void browse('/', id)
           }}
@@ -379,6 +421,7 @@ export default function StorageBrowserPage() {
         />
         <Button onClick={() => void browse(pathInput || '/')}>前往</Button>
         <Button onClick={() => void browse(parentPath(path))}>上一级</Button>
+        {matchingTasks.length > 0 && <Button onClick={() => void runCurrent()}>运行当前</Button>}
         <Input
           placeholder="筛选"
           allowClear
@@ -408,6 +451,26 @@ export default function StorageBrowserPage() {
         columns={columns}
         dataSource={sorted}
         onChange={onTableChange}
+        onRow={(entry) => {
+          // 与旧 UI 一致：仅媒体行有右键菜单、tabIndex 与 aria-haspopup
+          if (!isMediaEntry(entry)) return {}
+          return {
+            tabIndex: 0,
+            'aria-haspopup': 'menu',
+            onContextMenu: (event) => {
+              event.preventDefault()
+              setMenu({ x: event.clientX, y: event.clientY, entry })
+            },
+            onKeyDown: (event) => {
+              if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+                event.preventDefault()
+                // 旧 UI 键盘打开时定位在行 rect.left+20 / rect.top+20
+                const rect = event.currentTarget.getBoundingClientRect()
+                setMenu({ x: rect.left + 20, y: rect.top + 20, entry })
+              }
+            },
+          }
+        }}
       />
       <RenameModal
         key={'rename:' + (renameTarget?.path ?? '')}
@@ -430,6 +493,19 @@ export default function StorageBrowserPage() {
         onCancel={() => setMkdirOpen(false)}
         onOk={(name) => void submitMkdir(name)}
       />
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[{ key: 'copy', label: '复制STRM地址' }]}
+          onSelect={(key) => {
+            const { entry } = menu
+            setMenu(null)
+            if (key === 'copy') void copyURL(entry)
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </>
   )
 }

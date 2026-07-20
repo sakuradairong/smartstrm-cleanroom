@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Input, Modal, Popconfirm, Select, Space, Table, Typography } from 'antd'
+import { App, Button, Input, Modal, Popconfirm, Select, Space, Table, Tooltip, Typography } from 'antd'
 import type { TableProps } from 'antd'
 import { deleteJSON, getJSON, postJSON } from '../api/client'
+import { getBootstrap } from '../api/bootstrap'
 import type { MatchingTask, StorageEntry, StorageSummary } from '../api/types'
 import ContextMenu from '../components/ContextMenu'
 import EntryIcon, { isMediaEntry } from '../components/EntryIcon'
+import BatchRenameModal from './BatchRenameModal'
+import TmdbModal from './TmdbModal'
 
 export const collator = new Intl.Collator('zh', { numeric: true, sensitivity: 'base' })
 
@@ -160,6 +163,10 @@ export default function StorageBrowserPage() {
   const [mkdirOpen, setMkdirOpen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number; entry: StorageEntry } | null>(null)
   const [matchingTasks, setMatchingTasks] = useState<MatchingTask[]>([])
+  const [batchRenameOpen, setBatchRenameOpen] = useState(false)
+  const [tmdbOpen, setTmdbOpen] = useState(false)
+  // 对应旧 UI 的 tmdbConfigured 门控；bootstrap 获取失败时保持可用，不阻断用户。
+  const [tmdbConfigured, setTmdbConfigured] = useState(true)
   // browseSeq：并发 browse 最新者胜，陈旧响应不得覆盖更新的 entries/path。
   const browseSeq = useRef(0)
   // navRef 同步记录当前位置，对应旧 UI 的 pathInput.value / storageSelect.value，
@@ -223,6 +230,14 @@ export default function StorageBrowserPage() {
         }
       } catch (err) {
         message.error((err as Error).message)
+      }
+    })()
+    void (async () => {
+      try {
+        const bootstrap = await getBootstrap()
+        setTmdbConfigured(bootstrap.tmdb_configured)
+      } catch {
+        // 获取失败保持按钮可用（不由前端额外提示）
       }
     })()
     // 仅挂载时执行一次
@@ -441,6 +456,13 @@ export default function StorageBrowserPage() {
           onChange={changeNameWidth}
         />
         <Button onClick={() => setMkdirOpen(true)}>新建目录</Button>
+        <Button onClick={() => setBatchRenameOpen(true)}>批量命名</Button>
+        {/* 与旧 UI 的 TMDB 门控一致：未配置 API Key 时禁用并提示 */}
+        <Tooltip title={tmdbConfigured ? undefined : 'TMDB API Key 未配置，请在配置页设置后重启服务'}>
+          <Button disabled={!tmdbConfigured} onClick={() => setTmdbOpen(true)}>
+            影视识别
+          </Button>
+        </Tooltip>
         <span role="status" aria-live="polite">
           显示 {filtered.length} / 共 {entries.length} 项
         </span>
@@ -492,6 +514,26 @@ export default function StorageBrowserPage() {
         loading={actionLoading === `${path}:mkdir`}
         onCancel={() => setMkdirOpen(false)}
         onOk={(name) => void submitMkdir(name)}
+      />
+      <BatchRenameModal
+        storageId={storageId}
+        path={path}
+        open={batchRenameOpen}
+        onClose={() => setBatchRenameOpen(false)}
+        onDone={() => {
+          setBatchRenameOpen(false)
+          void browse(path)
+        }}
+      />
+      <TmdbModal
+        storageId={storageId}
+        path={path}
+        open={tmdbOpen}
+        onClose={() => setTmdbOpen(false)}
+        onDone={() => {
+          setTmdbOpen(false)
+          void browse(path)
+        }}
       />
       {menu && (
         <ContextMenu

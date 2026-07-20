@@ -67,9 +67,9 @@ test('渲染初始历史行，格式与旧 UI 一致', async () => {
   expect(await screen.findByText('/movies/a.mkv')).toBeInTheDocument()
   expect(screen.getByText('/movies/b.mkv')).toBeInTheDocument()
   expect(screen.getByText('t2')).toBeInTheDocument()
-  expect(screen.getByText('生成 1 / 复制 2 / 删除 3 / 跳过 4')).toBeInTheDocument()
-  // 有 error 时只显示错误
-  expect(screen.getByText('磁盘已满')).toBeInTheDocument()
+  expect(screen.getByText('生成 1 / 复制 2 / 删除 3 / 跳过 4 / 失败 0')).toBeInTheDocument()
+  // 有 error 时显示 error + 失败计数
+  expect(screen.getByText('磁盘已满 / 失败 0')).toBeInTheDocument()
   expect(screen.getByText('completed')).toBeInTheDocument()
   expect(screen.getByText('failed')).toBeInTheDocument()
 })

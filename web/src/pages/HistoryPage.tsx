@@ -4,10 +4,11 @@ import type { TableProps } from 'antd'
 import type { HistoryEvent } from '../api/types'
 import { useHistoryStream } from '../hooks/useHistoryStream'
 
-// 与旧 UI renderHistory 一致：有错误只显示错误，否则显示计数
+// 与旧 UI 运行时（renderIndexHTML 注入后的 renderHistory）一致：
+// 有错误显示 error + 失败计数，否则显示各项计数（含失败）
 function resultText(event: HistoryEvent): string {
-  if (event.error) return event.error
-  return `生成 ${event.created || 0} / 复制 ${event.copied || 0} / 删除 ${event.removed || 0} / 跳过 ${event.skipped || 0}`
+  if (event.error) return `${event.error} / 失败 ${event.failed || 0}`
+  return `生成 ${event.created || 0} / 复制 ${event.copied || 0} / 删除 ${event.removed || 0} / 跳过 ${event.skipped || 0} / 失败 ${event.failed || 0}`
 }
 
 export default function HistoryPage() {

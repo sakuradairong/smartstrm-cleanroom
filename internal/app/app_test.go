@@ -1090,6 +1090,79 @@ func TestHistoryAPIAndSSE(t *testing.T) {
 	cancel()
 }
 
+func TestBootstrapReportsTMDBConfiguredWithoutLeakingKey(t *testing.T) {
+	const apiKey = "secret-key-value"
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "secret",
+		Admin: config.AdminConfig{Username: "admin", Password: "password"},
+		TMDB:  config.TMDBConfig{APIKey: apiKey},
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	request.SetBasicAuth("admin", "password")
+	response = httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.Contains(t, response.Body.String(), `"tmdb_configured":true`)
+	assert.NotContains(t, response.Body.String(), apiKey)
+}
+
+func TestBootstrapReportsTMDBNotConfigured(t *testing.T) {
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "secret",
+		Admin: config.AdminConfig{Username: "admin", Password: "password"},
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	request.SetBasicAuth("admin", "password")
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.Contains(t, response.Body.String(), `"tmdb_configured":false`)
+}
+
+func TestOverviewAggregatesState(t *testing.T) {
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "secret",
+		Admin:    config.AdminConfig{Username: "admin", Password: "password"},
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: t.TempDir()}, {ID: "other", Type: "local", Root: t.TempDir()}},
+		Tasks: []config.TaskConfig{
+			{ID: "movies", Name: "Movies", StorageID: "media", Source: "/", Destination: t.TempDir()},
+			{ID: "shows", Name: "Shows", StorageID: "other", Source: "/", Destination: t.TempDir()},
+		},
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	request.SetBasicAuth("admin", "password")
+	response = httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	var summary overviewSummary
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &summary))
+	assert.Equal(t, 2, summary.Tasks.Total)
+	assert.Equal(t, 2, summary.Storages)
+	assert.Equal(t, 0, summary.Tasks.Running)
+	assert.Equal(t, 0, summary.Tasks.Failed)
+	assert.Equal(t, 0, summary.Tasks.Queued)
+	assert.NotNil(t, summary.History)
+}
+
 func quoteJSON(value string) string {
 	var buffer bytes.Buffer
 	buffer.WriteByte('"')

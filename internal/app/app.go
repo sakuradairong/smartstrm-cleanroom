@@ -71,11 +71,12 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	uiHTML, err := renderIndexHTML(strings.TrimSpace(cfg.TMDB.APIKey) != "" && cfg.TMDB.APIKey != config.RedactedSecret)
+	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, spaHandler: embeddedSPA().handler()}
+	uiHTML, err := renderIndexHTML(application.tmdbConfigured())
 	if err != nil {
 		return nil, err
 	}
-	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, uiHTML: uiHTML, spaHandler: embeddedSPA().handler()}
+	application.uiHTML = uiHTML
 	application.handler = application.routes()
 	return application, nil
 }
@@ -92,6 +93,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.Handle("GET /api/bootstrap", a.basicAuth(http.HandlerFunc(a.getBootstrap)))
+	mux.Handle("GET /api/overview", a.basicAuth(http.HandlerFunc(a.getOverview)))
 	mux.Handle("GET /api/tasks", a.basicAuth(http.HandlerFunc(a.listTasks)))
 	mux.Handle("POST /api/tasks/{id}/run", a.basicAuth(http.HandlerFunc(a.runTask)))
 	mux.Handle("POST /api/tasks/{id}/stop", a.basicAuth(http.HandlerFunc(a.stopTask)))
@@ -203,6 +206,46 @@ func emptyFavicon(w http.ResponseWriter, _ *http.Request) {
 
 func (a *App) listTasks(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": a.manager.Configs(), "statuses": a.manager.Statuses()})
+}
+
+func (a *App) tmdbConfigured() bool {
+	key := strings.TrimSpace(a.config.TMDB.APIKey)
+	return key != "" && key != config.RedactedSecret
+}
+
+func (a *App) getBootstrap(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]bool{"tmdb_configured": a.tmdbConfigured()})
+}
+
+type overviewSummary struct {
+	Tasks    overviewTasks   `json:"tasks"`
+	Storages int             `json:"storages"`
+	History  []history.Event `json:"history"`
+}
+
+type overviewTasks struct {
+	Total   int `json:"total"`
+	Running int `json:"running"`
+	Failed  int `json:"failed"`
+	Queued  int `json:"queued"`
+}
+
+func (a *App) getOverview(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	statuses := a.manager.Statuses()
+	summary := overviewSummary{Storages: len(a.config.Storages), History: a.history.Snapshot("", 10)}
+	summary.Tasks.Total = len(statuses)
+	for _, status := range statuses {
+		summary.Tasks.Queued += status.Queued
+		if status.Running {
+			summary.Tasks.Running++
+		}
+		if status.Error != "" && !status.Running {
+			summary.Tasks.Failed++
+		}
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func (a *App) runTask(w http.ResponseWriter, r *http.Request) {

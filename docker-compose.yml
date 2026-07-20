@@ -1,0 +1,26 @@
+services:
+  smartstrm:
+    build:
+      context: .
+      args:
+        GOPROXY: https://goproxy.cn,direct
+    container_name: smartstrm-cleanroom
+    restart: unless-stopped
+    ports:
+      - "8024:8024"
+      - "8097:8097"
+    volumes:
+      - ./runtime/config:/config
+      - ./runtime/media:/media
+      - ./runtime/strm:/strm
+    environment:
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8024/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: "1.0"

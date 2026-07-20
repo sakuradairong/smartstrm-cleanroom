@@ -1,0 +1,16 @@
+# Local configuration and runtime state
+config.json
+runtime/
+
+# Build and test output
+smartstrm
+coverage.out
+artifacts/
+*.test
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

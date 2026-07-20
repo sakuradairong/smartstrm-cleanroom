@@ -1,0 +1,47 @@
+name: Feature request
+description: 建议符合 clean-room 边界的新能力或改进。
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索现有 Issue、README 和功能矩阵。
+          required: true
+        - label: 该建议不依赖闭源私有源码、逆向商业授权或泄露的 API。
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述用户场景，不要只描述某个实现。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: public_sources
+    attributes:
+      label: 公开协议或文档来源
+      description: 协议集成必须提供可公开访问的规范、文档或合法测试依据。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 可复现验证环境
+      description: 说明如何用公开服务、固定版本容器、mock 或真实客户端证明行为。
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: 风险与替代方案
+      description: 包括删除风险、凭据处理、兼容边界和更简单替代方案。

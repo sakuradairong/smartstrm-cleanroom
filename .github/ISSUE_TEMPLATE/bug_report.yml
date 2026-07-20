@@ -1,0 +1,76 @@
+name: Bug report
+description: 报告可复现的缺陷；安全漏洞请使用私密报告。
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告。请先搜索已有 Issue，并删除 Token、口令、Cookie、签名 URL 和真实媒体信息。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已确认这不是安全漏洞，也不是原闭源/商业版本的支持请求。
+          required: true
+        - label: 我已搜索已有 Issue，并阅读功能矩阵中的已知边界。
+          required: true
+        - label: 我已从配置、日志和截图中移除所有秘密和个人数据。
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: 请提供 Git commit SHA、tag 或镜像 digest，不要只写 latest。
+      placeholder: abcdef1
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式
+      options:
+        - Docker Compose
+        - Docker / Podman
+        - Go 直接运行
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统、架构、Go/Docker 版本，以及相关外部服务的精确版本。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 最小复现步骤
+      placeholder: |
+        1. 使用脱敏配置启动…
+        2. 请求…
+        3. 观察到…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: 最小脱敏配置结构
+      description: 可留空；不要粘贴真实凭据、Token、URL Query 或媒体路径。
+      render: json

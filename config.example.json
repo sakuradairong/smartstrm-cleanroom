@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "listen": ":8024",
+  "public_url": "http://192.168.1.10:8024",
+  "webhook_token": "replace-with-a-long-random-token",
+  "admin": {
+    "username": "admin",
+    "password": "replace-this-password"
+  },
+  "integrations": {
+    "clouddrive2": {
+      "/115open": "cloud-media/movies"
+    },
+    "moviepilot": {}
+  },
+  "tmdb": {
+    "api_key": "",
+    "language": "zh-CN",
+    "cache_minutes": 30,
+    "image_base_url": "https://image.tmdb.org/t/p/w185",
+    "proxy_url": ""
+  },
+  "media_tools": {
+    "ffmpeg": "ffmpeg",
+    "timeout_seconds": 60
+  },
+  "history": {
+    "path": "/config/history.jsonl",
+    "max_entries": 2000
+  },
+  "media_proxy": {
+    "enabled": false,
+    "listen": ":8097",
+    "upstream": "http://emby:8096",
+    "server_type": "emby",
+    "rewrite_playback_info": false
+  },
+  "storages": [
+    {
+      "id": "local-media",
+      "type": "local",
+      "root": "/media"
+    },
+    {
+      "id": "webdav-media",
+      "type": "webdav",
+      "endpoint": "https://dav.example.com",
+      "root": "/media",
+      "username": "user",
+      "password": "password"
+    },
+    {
+      "id": "cloud-media",
+      "type": "openlist",
+      "endpoint": "http://openlist:5244",
+      "root": "/cloud-media",
+      "token": "OPENLIST_ADMIN_OR_GUEST_TOKEN"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "movies",
+      "name": "电影",
+      "storage_id": "local-media",
+      "source": "/movies",
+      "destination": "/strm/movies",
+      "schedule": "0 */6 * * *",
+      "file_id_mode": false,
+      "dir_time_check": false,
+      "watch": true,
+      "incremental": true,
+      "sync_delete": false,
+      "media_ext": [".mkv", ".mp4", ".iso"],
+      "copy_ext": [".jpg", ".png", ".nfo", ".srt"],
+      "min_size": 2097152,
+      "max_size": 0,
+      "keep_local": ["*.nfo"],
+      "plugins": [
+        {"type": "filename_skip", "pattern": "sample", "match_mode": "literal", "filter_mode": "exclude", "directory_only": false, "case_sensitive": false},
+        {"type": "filename_skip", "pattern": "^(extras|trailers)$", "match_mode": "regex", "filter_mode": "exclude", "directory_only": true, "case_sensitive": false},
+        {"type": "replace_regex", "pattern": "[<>:\\|?*]", "replacement": "_"}
+      ]
+    }
+  ]
+}

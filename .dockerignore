@@ -1,0 +1,9 @@
+.git
+.pi
+runtime
+artifacts
+*.md
+!LICENSE
+config.json
+smartstrm
+coverage.out

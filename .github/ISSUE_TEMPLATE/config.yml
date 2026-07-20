@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞报告
+    url: https://github.com/sakuradairong/smartstrm-cleanroom/security/advisories/new
+    about: 请使用私密漏洞报告，不要公开安全问题。
+  - name: 使用与支持说明
+    url: https://github.com/sakuradairong/smartstrm-cleanroom/blob/main/SUPPORT.md
+    about: 提交前请阅读支持范围和脱敏要求。

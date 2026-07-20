@@ -21,6 +21,7 @@
 | 迅雷网盘 | ⬜ | OAuth、容量、列表、重命名、直链模式待实现和验证 |
 | ANi Open | ✅ | 官方 `ani-download.xml`、季度虚拟目录、大小/时间、直链、缓存、只读约束、模拟协议与实网 feed 验证 |
 | 存储浏览、导航、筛选 | ✅ | `/api/storages/*/entries` 与内嵌管理 UI；自然升/降序、名称列宽持久化、目录/视频/图片/音频/字幕图标、实时筛选数/目录总数及 `aria-live` 状态通过竞态、容器和真实 Chrome 交互验证 |
+| WebUI 配置管理 | ✅ | 基础文件只保留监听、公开 URL、管理员与 Webhook Token；受限 `/api/config/managed` 结构化管理存储、任务和高级能力，严格拒绝基础字段覆盖，密钥脱敏/保留、原子 `0600` 持久化、备份、重启提示、竞态、隔离 Docker 和真实 Chrome CRUD 已验证 |
 | 新建目录、重命名、移动、删除 | ✅ | Local/WebDAV/OpenList 统一接口与驱动测试 |
 | 复制签名 STRM 地址 | ✅ | `/api/storages/{id}/stream-url` 与 API 测试；文件行显式按钮及鼠标右键/`Shift+F10` 无障碍菜单复用签名接口，目录不显示复制项，并有竞态、容器和 Chrome 验证 |
 | 正则、顺序、魔法变量批量命名 | ✅ | `internal/rename`；预览、冲突检查、两阶段事务及 UI |

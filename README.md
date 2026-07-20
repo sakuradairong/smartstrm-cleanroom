@@ -73,8 +73,7 @@ cd smartstrm-cleanroom
 mkdir -p runtime/config runtime/media runtime/strm
 cp config.example.json runtime/config/config.json
 
-# 修改 public_url、管理员口令、Webhook Token、存储和任务。
-# 首次部署建议保持 sync_delete=false。
+# 只需修改 public_url、管理员口令和 Webhook Token。
 ${EDITOR:-vi} runtime/config/config.json
 
 # 容器使用 UID/GID 10001，需要能够原子更新配置和历史文件。
@@ -85,7 +84,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-管理页面默认位于 `http://localhost:8024`。`8097` 是可选媒体代理端口；只有配置中启用 `media_proxy` 后才会监听。
+管理页面默认位于 `http://localhost:8024`。首次登录后进入“配置”页添加存储和生成任务，验证保存后执行 `docker compose restart smartstrm`。`8097` 是可选媒体代理端口；只有通过 WebUI 配置并重启后才会监听。
 
 健康检查：
 
@@ -111,17 +110,17 @@ go run ./cmd/smartstrm -config config.json
 
 ## 配置
 
-完整字段见 [`config.example.json`](config.example.json)。配置使用严格 JSON 解码：未知字段、错误类型、非法 URL、危险本地根目录、无效 Cron 或不支持的能力会阻止启动或保存，不会只启动部分后台任务。
+[`config.example.json`](config.example.json) 只保留启动所需的基础字段。首次启动后，在管理 UI 的“配置”页添加存储、生成任务及其他业务能力；保存会严格校验整份候选配置并原子写回同一个 `0600` 文件，随后需要重启服务生效。未知字段、错误类型、非法 URL、危险本地根目录、无效 Cron 或不支持的能力都会阻止保存，不会只启动部分后台任务。
 
 | 区域 | 用途 | 注意事项 |
 | --- | --- | --- |
 | `admin` | 管理 UI/API 的 Basic Auth | 必须更换示例密码 |
 | `webhook_token` | Webhook 鉴权和签名密钥 | 使用强随机值；更换后需重新生成 STRM |
-| `storages` | Local/WebDAV/OpenList/ANi Open | 凭据只写入 `0600` 配置文件；国内云盘凭据建议保存在 OpenList |
-| `tasks` | 源路径、目标、调度和插件 | `sync_delete` 有破坏性，首次运行保持关闭 |
-| `history` | JSONL 运行历史 | 文件按敏感数据使用 `0600` 权限 |
-| `tmdb` | 搜索、详情和海报 | 真实服务需要用户自己的 API Key |
-| `media_proxy` | 固定上游媒体代理 | 默认关闭；上游必须是无凭据/Query/Fragment 的 HTTP(S) URL |
+| WebUI `存储` | Local/WebDAV/OpenList/ANi Open | 凭据经认证 API 写入 `0600` 配置；国内云盘凭据建议保存在 OpenList |
+| WebUI `生成任务` | 源路径、目标、调度和插件 | `sync_delete` 有破坏性，首次运行保持关闭 |
+| WebUI `高级能力` | 历史、TMDB、媒体工具、媒体代理、联动和全局插件 | 复杂映射/插件只编辑对应 JSON 区块，不暴露整份原始配置 |
+
+基础启动字段（`listen`、`public_url`、`admin`、`webhook_token`）不能通过业务设置 API 修改，避免错误操作导致管理入口失联。存储口令、Token 和 TMDB Key 在 WebUI 中显示为 `********`；保持该值或留空会保留已有密钥。完整持久化结构仍可通过认证后的 `GET /api/config` 查看脱敏结果，供备份和自动化使用。
 
 建议生成随机 Token：
 

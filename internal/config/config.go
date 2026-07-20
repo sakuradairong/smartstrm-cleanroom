@@ -38,6 +38,20 @@ type Config struct {
 	Path         string            `json:"-"`
 }
 
+// ManagedConfig contains settings that are edited through the management UI.
+// Bootstrap settings such as listen addresses and administrator credentials are
+// intentionally excluded so this value cannot overwrite them.
+type ManagedConfig struct {
+	Storages     []StorageConfig   `json:"storages"`
+	Tasks        []TaskConfig      `json:"tasks"`
+	Plugins      []PluginConfig    `json:"plugins"`
+	Integrations IntegrationConfig `json:"integrations"`
+	TMDB         TMDBConfig        `json:"tmdb"`
+	MediaTools   MediaToolsConfig  `json:"media_tools"`
+	History      HistoryConfig     `json:"history"`
+	MediaProxy   MediaProxyConfig  `json:"media_proxy"`
+}
+
 type MediaProxyConfig struct {
 	Enabled             bool   `json:"enabled"`
 	Listen              string `json:"listen"`
@@ -288,14 +302,38 @@ func (c Config) Redacted() Config {
 	return c
 }
 
+func (c Config) Managed() ManagedConfig {
+	return ManagedConfig{
+		Storages:     c.Storages,
+		Tasks:        c.Tasks,
+		Plugins:      c.Plugins,
+		Integrations: c.Integrations,
+		TMDB:         c.TMDB,
+		MediaTools:   c.MediaTools,
+		History:      c.History,
+		MediaProxy:   c.MediaProxy,
+	}
+}
+
+func (c *Config) ApplyManaged(managed ManagedConfig) {
+	c.Storages = managed.Storages
+	c.Tasks = managed.Tasks
+	c.Plugins = managed.Plugins
+	c.Integrations = managed.Integrations
+	c.TMDB = managed.TMDB
+	c.MediaTools = managed.MediaTools
+	c.History = managed.History
+	c.MediaProxy = managed.MediaProxy
+}
+
 func PreserveSecrets(candidate *Config, current Config) {
-	if candidate.WebhookToken == RedactedSecret {
+	if candidate.WebhookToken == "" || candidate.WebhookToken == RedactedSecret {
 		candidate.WebhookToken = current.WebhookToken
 	}
-	if candidate.Admin.Password == RedactedSecret {
+	if candidate.Admin.Password == "" || candidate.Admin.Password == RedactedSecret {
 		candidate.Admin.Password = current.Admin.Password
 	}
-	if candidate.TMDB.APIKey == RedactedSecret {
+	if candidate.TMDB.APIKey == "" || candidate.TMDB.APIKey == RedactedSecret {
 		candidate.TMDB.APIKey = current.TMDB.APIKey
 	}
 	existing := make(map[string]StorageConfig, len(current.Storages))
@@ -304,10 +342,10 @@ func PreserveSecrets(candidate *Config, current Config) {
 	}
 	for index := range candidate.Storages {
 		previous := existing[candidate.Storages[index].ID]
-		if candidate.Storages[index].Password == RedactedSecret {
+		if candidate.Storages[index].Password == "" || candidate.Storages[index].Password == RedactedSecret {
 			candidate.Storages[index].Password = previous.Password
 		}
-		if candidate.Storages[index].Token == RedactedSecret {
+		if candidate.Storages[index].Token == "" || candidate.Storages[index].Token == RedactedSecret {
 			candidate.Storages[index].Token = previous.Token
 		}
 	}

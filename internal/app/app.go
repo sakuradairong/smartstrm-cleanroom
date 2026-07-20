@@ -113,6 +113,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/storages/{id}/tmdb-rename", a.basicAuth(http.HandlerFunc(a.tmdbRename)))
 	mux.Handle("GET /api/config", a.basicAuth(http.HandlerFunc(a.getConfig)))
 	mux.Handle("PUT /api/config", a.basicAuth(http.HandlerFunc(a.putConfig)))
+	mux.Handle("GET /api/config/managed", a.basicAuth(http.HandlerFunc(a.getManagedConfig)))
+	mux.Handle("PUT /api/config/managed", a.basicAuth(http.HandlerFunc(a.putManagedConfig)))
 	mux.Handle("POST /api/config/restore", a.basicAuth(http.HandlerFunc(a.restoreConfig)))
 	mux.Handle("POST /api/config/webhook-token", a.basicAuth(http.HandlerFunc(a.resetWebhookToken)))
 	mux.Handle("GET /api/history", a.basicAuth(http.HandlerFunc(a.listHistory)))
@@ -181,8 +183,9 @@ func renderIndexHTML(tmdbConfigured bool) (string, error) {
 <section id="configView"`
 	result = strings.Replace(result, sectionAnchor, menuHTML, 1)
 	result = strings.ReplaceAll(result, pollAnchor, "")
+	settingsJS := `function captureAdvancedDraft(){return[tmdbApiKey.value,tmdbLanguage.value,tmdbCacheMinutes.value,tmdbBaseURL.value,tmdbImageBaseURL.value,tmdbProxyURL.value,historyPath.value,historyMaxEntries.value,ffmpegPath.value,mediaTimeout.value,mediaProxyEnabled.checked,mediaProxyListen.value,mediaProxyUpstream.value,mediaProxyType.value,mediaProxyRewrite.checked,cloudDriveMappings.value,moviePilotMappings.value,globalPlugins.value]}function restoreAdvancedDraft(v){[tmdbApiKey.value,tmdbLanguage.value,tmdbCacheMinutes.value,tmdbBaseURL.value,tmdbImageBaseURL.value,tmdbProxyURL.value,historyPath.value,historyMaxEntries.value,ffmpegPath.value,mediaTimeout.value,mediaProxyEnabled.checked,mediaProxyListen.value,mediaProxyUpstream.value,mediaProxyType.value,mediaProxyRewrite.checked,cloudDriveMappings.value,moviePilotMappings.value,globalPlugins.value]=v}const editStorageBase=editStorage;editStorage=function(index){editStorageBase(index);storageConfigID.disabled=index>=0};const saveStorageBase=saveStorage;saveStorage=function(event){const draft=captureAdvancedDraft(),type=storageConfigType.value,index=editingStorage<0?managedConfig.storages.length:editingStorage;saveStorageBase(event);const item=managedConfig.storages[index];if(item){if(type==='local')item.endpoint='';if(type!=='webdav')item.username=item.password='';if(type!=='openlist')item.token='';if(type==='ani_open')item.root='';renderManagedConfig()}restoreAdvancedDraft(draft)};const deleteStorageBase=deleteStorage;deleteStorage=function(index){const draft=captureAdvancedDraft();deleteStorageBase(index);restoreAdvancedDraft(draft)};const saveTaskBase=saveTask;saveTask=function(event){const draft=captureAdvancedDraft();saveTaskBase(event);restoreAdvancedDraft(draft)};const deleteTaskBase=deleteTask;deleteTask=function(index){const draft=captureAdvancedDraft();deleteTaskBase(index);restoreAdvancedDraft(draft)};`
 	menuJS := `let historyPending=[],historyPendingIDs=new Set(),historyRenderFrame=0;function clearPendingHistoryEvents(){if(historyRenderFrame)cancelAnimationFrame(historyRenderFrame);historyRenderFrame=0;historyPending=[];historyPendingIDs.clear()}function queueHistoryEvent(item){if(historyPendingIDs.has(item.id)||historyEvents.some(x=>x.id===item.id))return;if(historyPending.length===200){historyPendingIDs.delete(historyPending.shift().id)}historyPending.push(item);historyPendingIDs.add(item.id);if(!historyRenderFrame)historyRenderFrame=requestAnimationFrame(flushHistoryEvents)}function flushHistoryEvents(){historyRenderFrame=0;if(!historyPending.length)return;const known=new Set(historyEvents.map(x=>x.id));for(const item of historyPending){if(!known.has(item.id)){historyEvents.unshift(item);known.add(item.id)}}historyPending=[];historyPendingIDs.clear();historyEvents=historyEvents.slice(0,200);renderHistory()}let taskPollTimer=0,taskPollRunning=false;async function taskPollCycle(){if(taskPollRunning||document.hidden)return;taskPollRunning=true;try{await load()}finally{taskPollRunning=false}if(!document.hidden){clearTimeout(taskPollTimer);taskPollTimer=setTimeout(taskPollCycle,3000)}}document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(taskPollTimer);else taskPollCycle()});taskPollCycle();let currentMatchingTasks=[];async function loadCurrentTasks(remotePath,storageID){runCurrentButton.classList.add('hidden');currentMatchingTasks=[];try{const matches=await api('/api/storages/'+encodeURIComponent(storageID)+'/matching-tasks?path='+encodeURIComponent(remotePath));if(pathInput.value!==remotePath||storageSelect.value!==storageID)return;currentMatchingTasks=matches;runCurrentButton.classList.toggle('hidden',!matches.length)}catch{runCurrentButton.classList.add('hidden')}}const browseEntries=browse;browse=async function(path){const remotePath=path||'/',storageID=storageSelect.value;await browseEntries(remotePath);if(pathInput.value===remotePath&&storageSelect.value===storageID)await loadCurrentTasks(remotePath,storageID)};async function runCurrentDirectory(){const task=currentMatchingTasks[0];if(!task)return;const remotePath=pathInput.value;try{await api('/api/tasks/'+encodeURIComponent(task.id)+'/run',{method:'POST',...body({path:remotePath})});alert('已将 '+(task.name||task.id)+' 的当前目录加入队列')}catch(e){alert(e.message)}}function storageIsMedia(item){return storageFileIcon(item)==='🎬'}let storageContextIndex=-1;function closeStorageContextMenu(){storageContextMenu.classList.add('hidden');storageContextIndex=-1}function openStorageContextMenu(event,row){closeStorageContextMenu();if(!row)return;const index=Number(row.dataset.entryIndex),item=currentEntries[index];if(!item||!storageIsMedia(item))return;event.preventDefault();storageContextIndex=index;storageContextMenu.classList.remove('hidden');const width=storageContextMenu.offsetWidth,height=storageContextMenu.offsetHeight,rect=row.getBoundingClientRect(),keyboard=event.type==='keydown',x=keyboard?rect.left+20:event.clientX,y=keyboard?rect.top+20:event.clientY;storageContextMenu.style.left=Math.max(8,Math.min(x,innerWidth-width-8))+'px';storageContextMenu.style.top=Math.max(8,Math.min(y,innerHeight-height-8))+'px';storageContextCopy.focus()}entries.addEventListener('contextmenu',event=>openStorageContextMenu(event,event.target.closest('tr')));entries.addEventListener('keydown',event=>{if(event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10'))openStorageContextMenu(event,event.target.closest('tr'))});storageContextCopy.addEventListener('click',async()=>{const index=storageContextIndex;closeStorageContextMenu();if(index>=0)await copyURL(index)});document.addEventListener('pointerdown',event=>{if(!storageContextMenu.contains(event.target))closeStorageContextMenu()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeStorageContextMenu()});` + scriptAnchor
-	return strings.Replace(result, scriptAnchor, menuJS, 1), nil
+	return strings.Replace(result, scriptAnchor, settingsJS+menuJS, 1), nil
 }
 
 func robots(w http.ResponseWriter, _ *http.Request) {
@@ -617,6 +620,7 @@ func (a *App) diskConfig() (config.Config, error) {
 }
 
 func (a *App) getConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	cfg, err := a.diskConfig()
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
@@ -626,6 +630,7 @@ func (a *App) getConfig(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) putConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	current, err := a.diskConfig()
@@ -651,6 +656,54 @@ func (a *App) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": true, "config": candidate.Redacted()})
+}
+
+func (a *App) getManagedConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	cfg, err := a.diskConfig()
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	redacted := cfg.Redacted()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"managed":          redacted.Managed(),
+		"bootstrap":        map[string]any{"listen": cfg.Listen, "public_url": cfg.PublicURL, "admin_username": cfg.Admin.Username},
+		"restart_required": false,
+		"backup_available": fileExists(a.config.Path + ".bak"),
+	})
+}
+
+func (a *App) putManagedConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	current, err := a.diskConfig()
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	var managed config.ManagedConfig
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&managed); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("request body must contain one JSON object"))
+		return
+	}
+	candidate := current
+	candidate.ApplyManaged(managed)
+	config.PreserveSecrets(&candidate, current)
+	candidate.Version, candidate.Path = config.CurrentVersion, a.config.Path
+	if err := config.Save(a.config.Path, candidate); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	redacted := candidate.Redacted()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": true, "managed": redacted.Managed()})
 }
 
 func (a *App) restoreConfig(w http.ResponseWriter, _ *http.Request) {

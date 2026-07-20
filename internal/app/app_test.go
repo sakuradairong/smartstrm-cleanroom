@@ -57,6 +57,20 @@ func TestRenderIndexHTMLTMDBConfigurationWarning(t *testing.T) {
 	assert.Contains(t, unconfigured, `href="https://github.com/sakuradairong/smartstrm-cleanroom"`)
 	assert.Contains(t, unconfigured, `AGPL-3.0-only`)
 	assert.Contains(t, unconfigured, `本程序不提供任何担保`)
+	assert.Contains(t, unconfigured, `id="managedStorageRows"`)
+	assert.Contains(t, unconfigured, `id="managedTaskRows"`)
+	assert.Contains(t, unconfigured, `onclick="editStorage(-1)"`)
+	assert.Contains(t, unconfigured, `onclick="editTask(-1)"`)
+	assert.Contains(t, unconfigured, `/api/config/managed`)
+	assert.Contains(t, unconfigured, `配置文件只需保留监听地址、公开地址、管理员和 Webhook Token`)
+	assert.NotContains(t, unconfigured, `id="configEditor"`)
+	assert.Contains(t, unconfigured, `id="managedStorageRows"`)
+	assert.Contains(t, unconfigured, `id="managedTaskRows"`)
+	assert.Contains(t, unconfigured, `onclick="editStorage(-1)"`)
+	assert.Contains(t, unconfigured, `onclick="editTask(-1)"`)
+	assert.Contains(t, unconfigured, `/api/config/managed`)
+	assert.Contains(t, unconfigured, `配置文件只需保留监听地址、公开地址、管理员和 Webhook Token`)
+	assert.NotContains(t, unconfigured, `id="configEditor"`)
 
 	configured, err := renderIndexHTML(true)
 	require.NoError(t, err)
@@ -845,6 +859,68 @@ func TestConfigPersistenceAPIRedactsPreservesResetsAndRestores(t *testing.T) {
 
 	response = call(http.MethodPut, "/api/config", string(payload)+` {}`)
 	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+}
+
+func TestManagedConfigAPIUpdatesBusinessSettingsOnly(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	disk := config.Config{
+		Version:      config.CurrentVersion,
+		Listen:       ":8024",
+		PublicURL:    "http://localhost:8024",
+		WebhookToken: "webhook-secret",
+		Admin:        config.AdminConfig{Username: "admin", Password: "admin-secret"},
+		Storages:     []config.StorageConfig{{ID: "dav", Type: "webdav", Endpoint: "https://dav.example", Root: "/media", Password: "dav-secret"}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	application, err := New(cfg)
+	require.NoError(t, err)
+	call := func(method, target, payload string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, target, bytes.NewBufferString(payload))
+		request.SetBasicAuth("admin", "admin-secret")
+		if payload != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		application.Handler().ServeHTTP(response, request)
+		return response
+	}
+
+	response := call(http.MethodGet, "/api/config/managed", "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.NotContains(t, response.Body.String(), "webhook-secret")
+	assert.NotContains(t, response.Body.String(), "admin-secret")
+	assert.NotContains(t, response.Body.String(), "dav-secret")
+	assert.Contains(t, response.Body.String(), `"admin_username":"admin"`)
+
+	managed := disk.Redacted().Managed()
+	managed.Storages = append(managed.Storages, config.StorageConfig{ID: "local", Type: "local", Root: "/media"})
+	managed.Tasks = []config.TaskConfig{{ID: "movies", Name: "Movies", StorageID: "local", Source: "/movies", Destination: "/strm/movies", MediaExt: []string{".mkv"}}}
+	payload, err := json.Marshal(managed)
+	require.NoError(t, err)
+	response = call(http.MethodPut, "/api/config/managed", string(payload))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.Contains(t, response.Body.String(), `"restart_required":true`)
+
+	updated, err := config.LoadDisk(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, ":8024", updated.Listen)
+	assert.Equal(t, "http://localhost:8024", updated.PublicURL)
+	assert.Equal(t, "webhook-secret", updated.WebhookToken)
+	assert.Equal(t, "admin-secret", updated.Admin.Password)
+	assert.Equal(t, "dav-secret", updated.Storages[0].Password)
+	assert.Len(t, updated.Storages, 2)
+	assert.Len(t, updated.Tasks, 1)
+
+	response = call(http.MethodPut, "/api/config/managed", `{"storages":[],"tasks":[],"listen":":9000"}`)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	unchanged, err := config.LoadDisk(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, ":8024", unchanged.Listen)
+	assert.Len(t, unchanged.Storages, 2)
 }
 
 func TestPublicWebhookOpenListRefresh(t *testing.T) {

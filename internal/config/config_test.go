@@ -118,6 +118,13 @@ func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
 	PreserveSecrets(&redacted, first)
 	assert.Equal(t, "first", redacted.WebhookToken)
 	assert.Equal(t, "storage-token", redacted.Storages[0].Token)
+	blank := first
+	blank.Storages = append([]StorageConfig(nil), first.Storages...)
+	blank.TMDB.APIKey = ""
+	blank.Storages[0].Password = ""
+	PreserveSecrets(&blank, first)
+	assert.Equal(t, "key", blank.TMDB.APIKey)
+	assert.Equal(t, "storage-pass", blank.Storages[0].Password)
 }
 
 func TestLoadRejectsUnknownAndFutureVersion(t *testing.T) {
@@ -142,6 +149,26 @@ func TestRedactedConfigIsJSONSafe(t *testing.T) {
 	assert.NotContains(t, text, "secret-value")
 	assert.NotContains(t, text, "admin-password")
 	assert.NotContains(t, text, "tmdb-key")
+}
+
+func TestManagedConfigExcludesAndPreservesBootstrapSettings(t *testing.T) {
+	cfg := Config{
+		Listen:       ":8024",
+		PublicURL:    "http://localhost:8024",
+		WebhookToken: "webhook-secret",
+		Admin:        AdminConfig{Username: "admin", Password: "admin-secret"},
+		Storages:     []StorageConfig{{ID: "media", Type: "local", Root: "/media"}},
+	}
+	managed := cfg.Managed()
+	managed.Storages = append(managed.Storages, StorageConfig{ID: "dav", Type: "webdav", Endpoint: "https://dav.example", Root: "/media"})
+	cfg.ApplyManaged(managed)
+
+	assert.Equal(t, ":8024", cfg.Listen)
+	assert.Equal(t, "http://localhost:8024", cfg.PublicURL)
+	assert.Equal(t, "webhook-secret", cfg.WebhookToken)
+	assert.Equal(t, AdminConfig{Username: "admin", Password: "admin-secret"}, cfg.Admin)
+	assert.Len(t, cfg.Storages, 2)
+	require.NoError(t, cfg.Validate())
 }
 
 func TestMediaProxyValidation(t *testing.T) {

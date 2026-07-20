@@ -4,6 +4,7 @@ import type { TableProps } from 'antd'
 import { getJSON, postJSON } from '../api/client'
 import type { TaskConfig, TaskResult, TaskStatus, TasksResponse } from '../api/types'
 import { usePolling } from '../hooks/usePolling'
+import TaskToolsModal from './TaskToolsModal'
 
 function statusOf(statuses: TaskStatus[], taskId: string): TaskStatus | undefined {
   return statuses.find((s) => s.task_id === taskId)
@@ -82,6 +83,7 @@ export default function TasksPage() {
   const [data, setData] = useState<TasksResponse>({ tasks: [], statuses: [] })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [runTaskId, setRunTaskId] = useState<string | null>(null)
+  const [toolsTaskId, setToolsTaskId] = useState<string | null>(null)
   const [preview, setPreview] = useState<unknown>(null)
 
   const load = async () => {
@@ -164,6 +166,7 @@ export default function TasksPage() {
             <Button loading={actionLoading === `${task.id}:preview`} onClick={() => void openPreview(task.id)}>
               预览
             </Button>
+            <Button onClick={() => setToolsTaskId(task.id)}>工具</Button>
           </Space>
         )
       },
@@ -184,6 +187,13 @@ export default function TasksPage() {
         taskId={runTaskId}
         onClose={() => setRunTaskId(null)}
         onRan={load}
+      />
+      <TaskToolsModal
+        key={toolsTaskId ?? ''}
+        taskId={toolsTaskId ?? ''}
+        open={toolsTaskId !== null}
+        onClose={() => setToolsTaskId(null)}
+        onChanged={() => void load()}
       />
       <StrmPreviewModal content={preview} onClose={() => setPreview(null)} />
     </>

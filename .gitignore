@@ -14,3 +14,8 @@ artifacts/
 .vscode/
 *.swp
 *.swo
+
+# WebUI frontend
+web/node_modules/
+internal/app/ui/dist/*
+!internal/app/ui/dist/.gitkeep

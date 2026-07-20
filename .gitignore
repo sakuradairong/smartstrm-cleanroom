@@ -3,7 +3,7 @@ config.json
 runtime/
 
 # Build and test output
-smartstrm
+/smartstrm
 coverage.out
 artifacts/
 *.test

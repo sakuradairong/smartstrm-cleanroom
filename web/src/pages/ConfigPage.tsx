@@ -1,3 +1,244 @@
+import { useCallback, useEffect, useState } from 'react'
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Descriptions,
+  Empty,
+  Popconfirm,
+  Space,
+  Spin,
+  Table,
+  Typography,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import { getJSON, postJSON, putJSON } from '../api/client'
+import type { ManagedConfig, StorageConfig } from '../api/types'
+import StorageFormModal from './config/StorageFormModal'
+
+interface BootstrapConfig {
+  listen: string
+  public_url: string
+  admin_username: string
+}
+
+interface ManagedConfigResponse {
+  managed: ManagedConfig
+  bootstrap: BootstrapConfig
+  restart_required: boolean
+  backup_available: boolean
+}
+
+interface SavedConfigResponse {
+  managed: ManagedConfig
+  restart_required: boolean
+}
+
+interface TokenResponse {
+  webhook_token: string
+  restart_required: boolean
+}
+
 export default function ConfigPage() {
-  return <h2>配置</h2>
+  const { message, modal } = App.useApp()
+  const [draft, setDraft] = useState<ManagedConfig | null>(null)
+  const [bootstrap, setBootstrap] = useState<BootstrapConfig | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [restartNeeded, setRestartNeeded] = useState(false)
+  const [backupAvailable, setBackupAvailable] = useState(false)
+  const [storageIndex, setStorageIndex] = useState<number | null>(null)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const response = await getJSON<ManagedConfigResponse>('/api/config/managed')
+      setDraft(response.managed)
+      setBootstrap(response.bootstrap)
+      setBackupAvailable(response.backup_available)
+      setDirty(false)
+      setError('')
+    } catch (loadError) {
+      const text = loadError instanceof Error ? loadError.message : '设置加载失败'
+      setError(text)
+      void message.error(text)
+    }
+  }, [message])
+
+  useEffect(() => { void load() }, [load])
+
+  const saveStorage = (storage: StorageConfig, index: number) => {
+    setDraft(current => {
+      if (!current) return current
+      const storages = [...current.storages]
+      if (index < 0) storages.push(storage)
+      else storages[index] = storage
+      return { ...current, storages }
+    })
+    setDirty(true)
+    setStorageIndex(null)
+  }
+
+  const deleteStorage = (index: number) => {
+    if (!draft) return
+    const storage = draft.storages[index]
+    const used = draft.tasks.filter(task => task.storage_id === storage.id)
+    if (used.length) {
+      modal.error({
+        title: '无法删除存储',
+        content: `请先删除或调整引用该存储的任务：${used.map(task => task.id).join(', ')}`,
+      })
+      return
+    }
+    setDraft({ ...draft, storages: draft.storages.filter((_, itemIndex) => itemIndex !== index) })
+    setDirty(true)
+  }
+
+  const resetToken = async () => {
+    try {
+      const response = await postJSON<TokenResponse>('/api/config/webhook-token')
+      setRestartNeeded(response.restart_required)
+      modal.info({
+        title: '新 Webhook Token',
+        content: (
+          <Space direction="vertical">
+            <Typography.Text>新 Token 仅显示一次，请立即保存。</Typography.Text>
+            <Typography.Text code copyable>{response.webhook_token}</Typography.Text>
+          </Space>
+        ),
+      })
+    } catch (tokenError) {
+      void message.error(tokenError instanceof Error ? tokenError.message : '重置失败')
+    }
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setSaving(true)
+    setError('')
+    try {
+      const response = await putJSON<SavedConfigResponse>('/api/config/managed', draft)
+      setDraft(response.managed)
+      setDirty(false)
+      setRestartNeeded(response.restart_required)
+      void message.success('全部业务设置已通过服务端校验并原子写入配置')
+    } catch (saveError) {
+      const text = saveError instanceof Error ? saveError.message : '保存失败'
+      setError(text)
+      void message.error(text)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const restore = async () => {
+    try {
+      await postJSON('/api/config/restore')
+      await load()
+      setRestartNeeded(true)
+      void message.success('已恢复备份，请重启服务')
+    } catch (restoreError) {
+      void message.error(restoreError instanceof Error ? restoreError.message : '恢复失败')
+    }
+  }
+
+  const columns: ColumnsType<StorageConfig> = [
+    { title: 'ID', dataIndex: 'id' },
+    { title: '类型', dataIndex: 'type' },
+    {
+      title: 'Root / Endpoint',
+      render: (_, storage) => (
+        <Space direction="vertical" size={0}>
+          {storage.root ? <span>{storage.root}</span> : null}
+          {storage.endpoint ? <Typography.Text type="secondary">{storage.endpoint}</Typography.Text> : null}
+        </Space>
+      ),
+    },
+    {
+      title: '操作',
+      render: (_, storage, index) => (
+        <Space>
+          <Button type="link" onClick={() => setStorageIndex(index)}>编辑</Button>
+          <Popconfirm
+            title={`从配置中删除存储 ${storage.id}？不会删除远端文件。`}
+            okText="确定"
+            cancelText="取消"
+            onConfirm={() => deleteStorage(index)}
+          >
+            <Button type="link" danger>删除</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
+  if (!draft || !bootstrap) {
+    return <Spin tip="加载配置中"><div style={{ minHeight: 160 }} /></Spin>
+  }
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Typography.Title level={2}>配置</Typography.Title>
+      {error ? <Alert type="error" showIcon message={error} /> : null}
+      <Card title="基础启动配置" extra={(
+        <Popconfirm
+          title="生成新 Webhook Token？当前 Token 在重启后失效。"
+          okText="确定"
+          cancelText="取消"
+          onConfirm={() => void resetToken()}
+        >
+          <Button danger>重置 Webhook Token</Button>
+        </Popconfirm>
+      )}>
+        <Descriptions column={{ xs: 1, sm: 2, lg: 4 }}>
+          <Descriptions.Item label="监听地址"><Typography.Text code>{bootstrap.listen}</Typography.Text></Descriptions.Item>
+          <Descriptions.Item label="公开地址"><Typography.Text code>{bootstrap.public_url}</Typography.Text></Descriptions.Item>
+          <Descriptions.Item label="管理员"><Typography.Text code>{bootstrap.admin_username || '（未启用）'}</Typography.Text></Descriptions.Item>
+          <Descriptions.Item label="Webhook Token"><Typography.Text code>已在基础文件中配置</Typography.Text></Descriptions.Item>
+        </Descriptions>
+      </Card>
+
+      <Card title="存储" extra={<Button type="primary" onClick={() => setStorageIndex(-1)}>添加存储</Button>}>
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={draft.storages}
+          pagination={false}
+          locale={{ emptyText: <Empty description="尚未添加存储" /> }}
+          scroll={{ x: 700 }}
+        />
+      </Card>
+      <Card title="生成任务"><Empty description="任务配置将在下一阶段提供" /></Card>
+      <Card title="高级能力"><Empty description="高级能力配置将在下一阶段提供" /></Card>
+
+      <Card>
+        <Space wrap>
+          <Button type="primary" loading={saving} disabled={saving || !dirty} onClick={() => void save()}>
+            验证并保存全部设置
+          </Button>
+          <Button disabled={saving || !dirty} onClick={() => void load()}>放弃修改并重新加载</Button>
+          <Popconfirm
+            title="用上一次备份覆盖当前全部配置？恢复后必须重启。"
+            okText="确定"
+            cancelText="取消"
+            onConfirm={() => void restore()}
+          >
+            <Button disabled={saving || !backupAvailable}>恢复上一次备份</Button>
+          </Popconfirm>
+          <Typography.Text type="secondary" role="status" aria-live="polite">
+            {restartNeeded ? '设置已保存，等待重启生效' : dirty ? '配置草稿有未保存修改' : '设置已加载'}
+          </Typography.Text>
+        </Space>
+      </Card>
+
+      <StorageFormModal
+        open={storageIndex !== null}
+        index={storageIndex ?? -1}
+        storages={draft.storages}
+        onSave={saveStorage}
+        onClose={() => setStorageIndex(null)}
+      />
+    </Space>
+  )
 }

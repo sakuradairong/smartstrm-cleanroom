@@ -51,7 +51,7 @@ test('加载并渲染四个配置卡片', async () => {
   stubFetch()
   renderPage()
   expect(await screen.findByText('基础启动配置')).toBeInTheDocument()
-  expect(screen.getByText('存储')).toBeInTheDocument()
+  expect(screen.getAllByText('存储').length).toBeGreaterThan(0)
   expect(screen.getByText('生成任务')).toBeInTheDocument()
   expect(screen.getByText('高级能力')).toBeInTheDocument()
   expect(screen.getByText(':8024')).toBeInTheDocument()

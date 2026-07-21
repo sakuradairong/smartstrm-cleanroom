@@ -15,7 +15,9 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { getJSON, postJSON, putJSON } from '../api/client'
 import type { ManagedConfig, StorageConfig } from '../api/types'
+import type { TaskConfig } from '../api/types'
 import StorageFormModal from './config/StorageFormModal'
+import TaskFormModal from './config/TaskFormModal'
 
 interface BootstrapConfig {
   listen: string
@@ -49,6 +51,7 @@ export default function ConfigPage() {
   const [restartNeeded, setRestartNeeded] = useState(false)
   const [backupAvailable, setBackupAvailable] = useState(false)
   const [storageIndex, setStorageIndex] = useState<number | null>(null)
+  const [taskIndex, setTaskIndex] = useState<number | null>(null)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -92,6 +95,32 @@ export default function ConfigPage() {
       return
     }
     setDraft({ ...draft, storages: draft.storages.filter((_, itemIndex) => itemIndex !== index) })
+    setDirty(true)
+  }
+
+  const saveTask = (task: TaskConfig, index: number) => {
+    setDraft(current => {
+      if (!current) return current
+      const tasks = [...current.tasks]
+      if (index < 0) tasks.push(task)
+      else tasks[index] = task
+      return { ...current, tasks }
+    })
+    setDirty(true)
+    setTaskIndex(null)
+  }
+
+  const addTask = () => {
+    if (!draft?.storages.length) {
+      modal.warning({ title: '无法添加任务', content: '请先添加存储' })
+      return
+    }
+    setTaskIndex(-1)
+  }
+
+  const deleteTask = (index: number) => {
+    if (!draft) return
+    setDraft({ ...draft, tasks: draft.tasks.filter((_, taskItemIndex) => taskItemIndex !== index) })
     setDirty(true)
   }
 
@@ -173,6 +202,30 @@ export default function ConfigPage() {
     },
   ]
 
+  const taskColumns: ColumnsType<TaskConfig> = [
+    { title: 'ID', dataIndex: 'id' },
+    { title: '名称', dataIndex: 'name' },
+    { title: '存储', dataIndex: 'storage_id' },
+    { title: '源路径', dataIndex: 'source' },
+    { title: '调度', dataIndex: 'schedule', render: value => value || '手动' },
+    {
+      title: '操作',
+      render: (_, task, index) => (
+        <Space>
+          <Button type="link" onClick={() => setTaskIndex(index)}>编辑</Button>
+          <Popconfirm
+            title={`从配置中删除任务 ${task.id}？现有 STRM 文件不会自动删除。`}
+            okText="确定"
+            cancelText="取消"
+            onConfirm={() => deleteTask(index)}
+          >
+            <Button type="link" danger>删除</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
   if (!draft || !bootstrap) {
     return <Spin tip="加载配置中"><div style={{ minHeight: 160 }} /></Spin>
   }
@@ -209,7 +262,16 @@ export default function ConfigPage() {
           scroll={{ x: 700 }}
         />
       </Card>
-      <Card title="生成任务"><Empty description="任务配置将在下一阶段提供" /></Card>
+      <Card title="生成任务" extra={<Button type="primary" onClick={addTask}>添加任务</Button>}>
+        <Table
+          rowKey="id"
+          columns={taskColumns}
+          dataSource={draft.tasks}
+          pagination={false}
+          locale={{ emptyText: <Empty description="尚未添加任务" /> }}
+          scroll={{ x: 900 }}
+        />
+      </Card>
       <Card title="高级能力"><Empty description="高级能力配置将在下一阶段提供" /></Card>
 
       <Card>
@@ -238,6 +300,14 @@ export default function ConfigPage() {
         storages={draft.storages}
         onSave={saveStorage}
         onClose={() => setStorageIndex(null)}
+      />
+      <TaskFormModal
+        open={taskIndex !== null}
+        index={taskIndex ?? -1}
+        tasks={draft.tasks}
+        storages={draft.storages}
+        onSave={saveTask}
+        onClose={() => setTaskIndex(null)}
       />
     </Space>
   )

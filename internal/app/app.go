@@ -689,6 +689,7 @@ func (a *App) putManagedConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) restoreConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	if a.config.Path == "" {

@@ -807,6 +807,7 @@ func TestConfigPersistenceAPIRedactsPreservesResetsAndRestores(t *testing.T) {
 
 	response = call(http.MethodPost, "/api/config/restore", "")
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 	restored, err := config.LoadDisk(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, "original-secret", restored.WebhookToken)

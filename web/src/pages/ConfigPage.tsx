@@ -354,7 +354,7 @@ export default function ConfigPage() {
 
       <Card>
         <Space wrap>
-          <Button type="primary" loading={saving} disabled={saving} onClick={() => void save()}>
+          <Button type="primary" loading={saving} disabled={saving || !dirty} onClick={() => void save()}>
             验证并保存全部设置
           </Button>
           <Button disabled={saving || !dirty} onClick={() => void load()}>放弃修改并重新加载</Button>

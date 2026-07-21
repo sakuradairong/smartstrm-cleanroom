@@ -49,9 +49,9 @@ test('媒体代理启用后显示代理字段', async () => {
 
 test('TMDB Key 保持脱敏值提交并显示重启提示', async () => {
   const getPutBody = setupFetch()
-  const user = userEvent.setup()
   render(<AntApp><ConfigPage /></AntApp>)
-  await user.click(await screen.findByRole('button', { name: /验证并保存全部设置/ }))
+  fireEvent.change(await screen.findByLabelText('TMDB 语言'), { target: { value: 'en-US' } })
+  fireEvent.click(screen.getByRole('button', { name: /验证并保存全部设置/ }))
   await waitFor(() => expect(getPutBody()?.tmdb.api_key).toBe('********'))
   expect(await screen.findByRole('alert')).toHaveTextContent('配置已写入，请重启服务后生效')
 })

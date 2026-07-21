@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/cronexpr"
@@ -90,13 +91,16 @@ type AdminConfig struct {
 }
 
 type StorageConfig struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Root     string `json:"root"`
-	Endpoint string `json:"endpoint"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Token    string `json:"token"`
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	Root         string `json:"root"`
+	Endpoint     string `json:"endpoint"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	Token        string `json:"token"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	RootFileID   string `json:"root_file_id,omitempty"`
 }
 
 type TaskConfig struct {
@@ -298,6 +302,9 @@ func (c Config) Redacted() Config {
 		if c.Storages[index].Token != "" {
 			c.Storages[index].Token = RedactedSecret
 		}
+		if c.Storages[index].ClientSecret != "" {
+			c.Storages[index].ClientSecret = RedactedSecret
+		}
 	}
 	return c
 }
@@ -347,6 +354,9 @@ func PreserveSecrets(candidate *Config, current Config) {
 		}
 		if candidate.Storages[index].Token == "" || candidate.Storages[index].Token == RedactedSecret {
 			candidate.Storages[index].Token = previous.Token
+		}
+		if candidate.Storages[index].ClientSecret == "" || candidate.Storages[index].ClientSecret == RedactedSecret {
+			candidate.Storages[index].ClientSecret = previous.ClientSecret
 		}
 	}
 }
@@ -414,6 +424,22 @@ func (c Config) Validate() error {
 		case "webdav", "openlist", "quark", "115", "189", "123":
 			if _, err := urlpolicy.ParseHTTP(storage.Endpoint, false); err != nil {
 				return fmt.Errorf("storage %q endpoint: %w", storage.ID, err)
+			}
+		case "123_open", "123-open":
+			if storage.ClientID == "" {
+				return fmt.Errorf("storage %q client_id must not be empty", storage.ID)
+			}
+			if storage.ClientSecret == "" {
+				return fmt.Errorf("storage %q client_secret must not be empty", storage.ID)
+			}
+			if storage.Endpoint != "" {
+				return fmt.Errorf("storage %q endpoint must be empty for 123_open", storage.ID)
+			}
+			if storage.RootFileID != "" {
+				rootFileID, err := strconv.ParseInt(storage.RootFileID, 10, 64)
+				if err != nil || rootFileID < 0 {
+					return fmt.Errorf("storage %q root_file_id must be a non-negative integer", storage.ID)
+				}
 			}
 		case "ani_open", "ani-open":
 			if storage.Endpoint != "" {

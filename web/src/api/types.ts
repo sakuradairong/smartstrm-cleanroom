@@ -97,6 +97,9 @@ export interface StorageConfig {
   username: string
   password: string
   token: string
+	client_id?: string
+	client_secret?: string
+	root_file_id?: string
 }
 
 export interface ManagedConfig {

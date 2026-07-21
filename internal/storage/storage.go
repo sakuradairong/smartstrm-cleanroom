@@ -110,6 +110,8 @@ func BuildAll(configs []config.StorageConfig) (map[string]Storage, error) {
 			// Domestic-cloud aliases intentionally use OpenList's documented API.
 			// This keeps provider credentials in OpenList instead of this service.
 			instance, err = NewOpenList(cfg.Endpoint, cfg.Root, cfg.Token)
+		case "123_open", "123-open":
+			instance, err = NewPan123Open(cfg.ClientID, cfg.ClientSecret, cfg.RootFileID)
 		case "ani_open", "ani-open":
 			instance, err = NewANiOpen(cfg.Endpoint)
 		default:

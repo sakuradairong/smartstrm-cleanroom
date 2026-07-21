@@ -41,6 +41,15 @@ func TestValidate(t *testing.T) {
 		{name: "storage endpoint fragment", mutate: func(c *Config) {
 			c.Storages[0].Type, c.Storages[0].Endpoint = "webdav", "https://example.test/dav#fragment"
 		}, match: "fragment"},
+		{name: "123 open missing client id", mutate: func(c *Config) {
+			c.Storages[0] = StorageConfig{ID: "pan", Type: "123_open", ClientSecret: "secret", RootFileID: "0"}
+		}, match: "client_id"},
+		{name: "123 open missing client secret", mutate: func(c *Config) {
+			c.Storages[0] = StorageConfig{ID: "pan", Type: "123_open", ClientID: "id", RootFileID: "0"}
+		}, match: "client_secret"},
+		{name: "123 open invalid root file id", mutate: func(c *Config) {
+			c.Storages[0] = StorageConfig{ID: "pan", Type: "123_open", ClientID: "id", ClientSecret: "secret", RootFileID: "not-a-number"}
+		}, match: "root_file_id"},
 		{name: "unknown storage", mutate: func(c *Config) { c.Tasks[0].StorageID = "missing" }, match: "unknown storage"},
 		{name: "empty filename skip", mutate: func(c *Config) { c.Tasks[0].Plugins = []PluginConfig{{Type: "filename_skip"}} }, match: "pattern"},
 		{name: "invalid match mode", mutate: func(c *Config) {
@@ -125,6 +134,21 @@ func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
 	PreserveSecrets(&blank, first)
 	assert.Equal(t, "key", blank.TMDB.APIKey)
 	assert.Equal(t, "storage-pass", blank.Storages[0].Password)
+}
+
+func TestPan123OpenSecretIsRedactedAndPreserved(t *testing.T) {
+	current := Config{Storages: []StorageConfig{{ID: "pan", Type: "123_open", ClientID: "client-id", ClientSecret: "client-secret", RootFileID: "777"}}}
+	redacted := current.Redacted()
+	require.Len(t, redacted.Storages, 1)
+	assert.Equal(t, RedactedSecret, redacted.Storages[0].ClientSecret)
+	assert.Equal(t, "client-id", redacted.Storages[0].ClientID)
+	assert.Equal(t, "777", redacted.Storages[0].RootFileID)
+
+	PreserveSecrets(&redacted, current)
+	assert.Equal(t, "client-secret", redacted.Storages[0].ClientSecret)
+	redacted.Storages[0].ClientSecret = ""
+	PreserveSecrets(&redacted, current)
+	assert.Equal(t, "client-secret", redacted.Storages[0].ClientSecret)
 }
 
 func TestLoadRejectsUnknownAndFutureVersion(t *testing.T) {

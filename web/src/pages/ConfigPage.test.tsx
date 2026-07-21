@@ -18,13 +18,13 @@ const managed: ManagedConfig = {
   media_proxy: { enabled: false, listen: '', upstream: '', server_type: '', rewrite_playback_info: false },
 }
 
-function stubFetch() {
+function stubFetch(config: ManagedConfig = managed) {
   const mock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     let body: unknown
     if (url === '/api/config/managed' && !init?.method) {
       body = {
-        managed,
+		managed: config,
         bootstrap: { listen: ':8024', public_url: 'https://strm.example', admin_username: 'admin' },
         backup_available: true,
         restart_required: false,
@@ -69,6 +69,21 @@ test('存储表格渲染已有存储', async () => {
   renderPage()
   expect((await screen.findAllByText('local')).length).toBeGreaterThan(0)
   expect(screen.getByText('/media')).toBeInTheDocument()
+})
+
+test('123 官方存储显示挂载 File ID 且不显示密钥', async () => {
+	const panConfig: ManagedConfig = {
+		...managed,
+		storages: [{
+			id: 'pan123', type: '123_open', root: '', endpoint: '', username: '', password: '', token: '',
+			client_id: 'client-id', client_secret: '********', root_file_id: '777',
+		}],
+		tasks: [],
+	}
+	stubFetch(panConfig)
+	renderPage()
+	expect(await screen.findByText('挂载 File ID：777')).toBeInTheDocument()
+	expect(screen.queryByText('********')).not.toBeInTheDocument()
 })
 
 test('删除被任务引用的存储被阻止并提示', async () => {

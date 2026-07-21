@@ -30,8 +30,8 @@
 
 ### 存储与文件操作
 
-- Local、WebDAV、OpenList，以及只读 ANi Open RSS/XML 驱动
-- 国内云盘优先通过 OpenList 聚合接入；`quark`、`115`、`189`、`123` 是 OpenList 适配器别名，不是原生驱动
+- Local、WebDAV、OpenList、123 云盘官方开发者 API，以及只读 ANi Open RSS/XML 驱动
+- `123_open` 使用 123 云盘官方开放平台；`quark`、`115`、`189`、`123` 仍是 OpenList 适配器别名，已有配置不会自动切换协议
 - 存储浏览、筛选、自然排序、新建目录、重命名、移动和删除
 - OpenList 显式分页、WebDAV 规范化 PROPFIND、元数据响应硬上限和严格 JSON/XML 解码
 - 本地根目录和符号链接边界保护；远端错误、直链和响应头脱敏
@@ -116,11 +116,20 @@ go run ./cmd/smartstrm -config config.json
 | --- | --- | --- |
 | `admin` | 管理 UI/API 的 Basic Auth | 必须更换示例密码 |
 | `webhook_token` | Webhook 鉴权和签名密钥 | 使用强随机值；更换后需重新生成 STRM |
-| WebUI `存储` | Local/WebDAV/OpenList/ANi Open | 凭据经认证 API 写入 `0600` 配置；国内云盘凭据建议保存在 OpenList |
+| WebUI `存储` | Local/WebDAV/OpenList/123 官方 API/ANi Open | 凭据经认证 API 写入 `0600` 配置；123 官方驱动的下载与播放需要对应开放平台权益和直链空间 |
 | WebUI `生成任务` | 源路径、目标、调度和插件 | `sync_delete` 有破坏性，首次运行保持关闭 |
 | WebUI `高级能力` | 历史、TMDB、媒体工具、媒体代理、联动和全局插件 | 复杂映射/插件只编辑对应 JSON 区块，不暴露整份原始配置 |
 
 基础启动字段（`listen`、`public_url`、`admin`、`webhook_token`）不能通过业务设置 API 修改，避免错误操作导致管理入口失联。存储口令、Token 和 TMDB Key 在 WebUI 中显示为 `********`；保持该值或留空会保留已有密钥。完整持久化结构仍可通过认证后的 `GET /api/config` 查看脱敏结果，供备份和自动化使用。
+
+### 123 云盘官方 API
+
+1. 前往 [123 云盘开放平台](https://www.123pan.com/developer) 创建开发者应用，取得 Client ID 和 Client Secret。
+2. 在 123 云盘中为计划挂载的子目录启用“直链空间”，并从目录 URL 获取 File ID。文件列表等基础能力可用时，不代表账号已具备下载/播放权益；直链通常需要相应 VIP/开放平台权限。
+3. 在 WebUI 的“配置 → 存储 → 添加存储”选择“123 云盘官方 API”，填写上述凭据和挂载目录 File ID；根目录 ID 为 `0`，但根目录本身不能提供直链。
+4. 保存后按页面提示重启服务。若任务要使用稳定 File ID STRM，启用任务的“文件 ID 模式”。
+
+原生驱动类型为 `123_open`。旧类型 `123` 继续表示 OpenList 适配器，不会在升级时静默改变认证方式。Client Secret 只在 `0600` 配置中持久化，管理 API 返回 `********`；编辑时保留该值或留空均不会清除真实密钥。
 
 建议生成随机 Token：
 
@@ -235,7 +244,7 @@ docs/                功能矩阵和外部验证要求
 
 ## 已知边界
 
-- 当前不提供夸克、115、天翼、123、迅雷的原生账号驱动；请使用 OpenList。
+- 夸克、115、天翼和迅雷仍需通过 OpenList；123 已提供官方开发者 API 驱动，但真实下载/播放取决于账号权益和目录直链设置。
 - 当前驱动不伪造稳定 File ID；不具备可信 File ID API 时使用路径模式。
 - Plex、飞牛影视及特定 Emby/Jellyfin 客户端的深度兼容尚未获得完整真实环境验证。
 - TMDB mock 和浏览器流程已验证，但实网限流、代理和地区响应仍需要真实 API Key。

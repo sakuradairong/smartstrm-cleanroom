@@ -14,6 +14,19 @@ const webdav: StorageConfig = {
   token: '',
 }
 
+const pan123: StorageConfig = {
+  id: 'pan123',
+  type: '123_open',
+  root: '',
+  endpoint: '',
+  username: '',
+  password: '',
+  token: '',
+  client_id: 'client-id',
+  client_secret: '********',
+  root_file_id: '777',
+}
+
 function renderModal(props: Partial<React.ComponentProps<typeof StorageFormModal>> = {}) {
   const onSave = vi.fn()
   render(
@@ -62,6 +75,34 @@ test('ani_open 类型隐藏 Root 字段', async () => {
   await chooseType('ani_open')
   expect(screen.getByLabelText('Endpoint')).toBeInTheDocument()
   expect(screen.queryByLabelText('Root')).not.toBeInTheDocument()
+})
+
+test('123 官方 API 类型显示开发者凭据和挂载目录，不要求 Endpoint 或 Root', async () => {
+  renderModal()
+  await chooseType('123 云盘官方 API')
+  expect(screen.getByLabelText('Client ID')).toBeInTheDocument()
+  expect(screen.getByLabelText('Client Secret')).toBeInTheDocument()
+  expect(screen.getByLabelText('挂载目录 File ID')).toHaveValue('0')
+  expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Root')).not.toBeInTheDocument()
+  expect(screen.getAllByText(/直链空间/).length).toBeGreaterThan(0)
+})
+
+test('123 官方 API 保存凭据并保留编辑时的 Secret', async () => {
+  const user = userEvent.setup()
+  const onSave = renderModal({ index: 0, storages: [pan123] })
+  expect(screen.getByLabelText('Client Secret')).toHaveValue('********')
+  await user.clear(screen.getByLabelText('Client Secret'))
+  await user.click(screen.getByRole('button', { name: /保\s*存/ }))
+  await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+    id: 'pan123',
+    type: '123_open',
+    root: '',
+    endpoint: '',
+    client_id: 'client-id',
+    client_secret: '********',
+    root_file_id: '777',
+  }), 0))
 })
 
 test('编辑已有存储时 ID 不可改', () => {

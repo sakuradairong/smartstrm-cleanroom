@@ -221,6 +221,9 @@ export default function ConfigPage() {
         <Space direction="vertical" size={0}>
           {storage.root ? <span>{storage.root}</span> : null}
           {storage.endpoint ? <Typography.Text type="secondary">{storage.endpoint}</Typography.Text> : null}
+          {storage.type === '123_open' ? (
+            <Typography.Text type="secondary">挂载 File ID：{storage.root_file_id || '0'}</Typography.Text>
+          ) : null}
         </Space>
       ),
     },

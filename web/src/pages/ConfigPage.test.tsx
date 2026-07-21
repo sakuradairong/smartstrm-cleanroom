@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { App as AntApp } from 'antd'
 import ConfigPage from './ConfigPage'
 import type { ManagedConfig } from '../api/types'
@@ -67,22 +66,20 @@ test('存储表格渲染已有存储', async () => {
 
 test('删除被任务引用的存储被阻止并提示', async () => {
   const fetchMock = stubFetch()
-  const user = userEvent.setup()
   renderPage()
   const row = (await screen.findByText('/media')).closest('tr')!
-  await user.click(within(row).getByRole('button', { name: /删\s*除/ }))
-  await user.click(await screen.findByRole('button', { name: /确\s*定/ }))
+  fireEvent.click(within(row).getByRole('button', { name: /删\s*除/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /确\s*定/ }))
   expect(await screen.findByText(/请先删除或调整引用该存储的任务：movies/)).toBeInTheDocument()
   expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')).toBe(false)
 })
 
 test('重置 Token 需要确认且结果显示一次', async () => {
   const fetchMock = stubFetch()
-  const user = userEvent.setup()
   renderPage()
-  await user.click(await screen.findByRole('button', { name: /重置 Webhook Token/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /重置 Webhook Token/ }))
   expect(fetchMock).not.toHaveBeenCalledWith('/api/config/webhook-token', expect.anything())
-  await user.click(await screen.findByRole('button', { name: /确\s*定/ }))
+  fireEvent.click(await screen.findByRole('button', { name: /确\s*定/ }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/config/webhook-token', expect.objectContaining({ method: 'POST' })))
   const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByText(/仅显示一次/)).toBeInTheDocument()

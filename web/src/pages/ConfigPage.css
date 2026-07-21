@@ -1,0 +1,32 @@
+.config-grid {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 2fr);
+  gap: 0.75rem 1rem;
+  align-items: center;
+}
+
+.config-grid > label {
+  font-weight: 500;
+}
+
+.config-control {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 11px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid #8c8c8c;
+  border-radius: 6px;
+}
+
+.config-control:focus {
+  border-color: #1677ff;
+  outline: 2px solid rgb(5 145 255 / 10%);
+}
+
+@media (max-width: 640px) {
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+}

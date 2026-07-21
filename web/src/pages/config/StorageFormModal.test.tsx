@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App as AntApp } from 'antd'
 import StorageFormModal from './StorageFormModal'
@@ -31,30 +31,35 @@ function renderModal(props: Partial<React.ComponentProps<typeof StorageFormModal
   return onSave
 }
 
-async function chooseType(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(screen.getByLabelText('类型'))
+async function chooseType(name: string) {
+  fireEvent.mouseDown(screen.getByLabelText('类型'))
   const matches = await screen.findAllByText(name)
-  await user.click(matches[matches.length - 1])
+  fireEvent.click(matches[matches.length - 1])
 }
 
-test('类型切换显隐字段', async () => {
-  const user = userEvent.setup()
+test('webdav 类型显示端点和账号字段', async () => {
   renderModal()
   expect(screen.getByLabelText('Root')).toBeInTheDocument()
   expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument()
 
-  await chooseType(user, 'webdav')
+  await chooseType('webdav')
   expect(screen.getByLabelText('Endpoint')).toBeInTheDocument()
   expect(screen.getByLabelText('Root')).toBeInTheDocument()
   expect(screen.getByLabelText('用户名')).toBeInTheDocument()
   expect(screen.getByLabelText('密码')).toBeInTheDocument()
+})
 
-  await chooseType(user, 'openlist')
+test('openlist 类型显示端点和 Token 字段', async () => {
+  renderModal()
+  await chooseType('openlist')
   expect(screen.getByLabelText('Endpoint')).toBeInTheDocument()
   expect(screen.getByLabelText('Token')).toBeInTheDocument()
   expect(screen.queryByLabelText('用户名')).not.toBeInTheDocument()
+})
 
-  await chooseType(user, 'ani_open')
+test('ani_open 类型隐藏 Root 字段', async () => {
+  renderModal()
+  await chooseType('ani_open')
   expect(screen.getByLabelText('Endpoint')).toBeInTheDocument()
   expect(screen.queryByLabelText('Root')).not.toBeInTheDocument()
 })
@@ -75,12 +80,11 @@ test('编辑时密码显示 ********，未修改提交保留原值', async () =>
 })
 
 test('新增 ani_open 时 UI 值映射为后端 ani-open', async () => {
-  const user = userEvent.setup()
   const onSave = renderModal()
-  await user.type(screen.getByLabelText('存储 ID'), 'ani')
-  await chooseType(user, 'ani_open')
-  await user.type(screen.getByLabelText('Endpoint'), 'https://ani.example')
-  await user.click(screen.getByRole('button', { name: /保\s*存/ }))
+  fireEvent.change(screen.getByLabelText('存储 ID'), { target: { value: 'ani' } })
+  await chooseType('ani_open')
+  fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'https://ani.example' } })
+  fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }))
   await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
     id: 'ani',
     type: 'ani-open',

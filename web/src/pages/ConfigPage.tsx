@@ -163,9 +163,17 @@ export default function ConfigPage() {
       setError('请先修正高级能力中的 JSON 格式错误')
       return
     }
-    const clouddrive2 = JSON.parse(cloudDriveMappings) as unknown
-    const moviepilot = JSON.parse(moviePilotMappings) as unknown
-    const plugins = JSON.parse(globalPlugins) as unknown
+    let clouddrive2: unknown
+    let moviepilot: unknown
+    let plugins: unknown
+    try {
+      clouddrive2 = JSON.parse(cloudDriveMappings) as unknown
+      moviepilot = JSON.parse(moviePilotMappings) as unknown
+      plugins = JSON.parse(globalPlugins) as unknown
+    } catch {
+      setError('请先修正高级能力中的 JSON 格式错误')
+      return
+    }
     if (!isStringRecord(clouddrive2) || !isStringRecord(moviepilot) || !Array.isArray(plugins)) {
       setError('路径映射必须是字符串 JSON 对象，全局插件必须是 JSON 数组')
       return

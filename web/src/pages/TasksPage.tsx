@@ -170,6 +170,11 @@ export default function TasksPage() {
       ),
     },
     {
+      title: '调度',
+      key: 'schedule',
+      render: (_, task) => task.schedule || '手动',
+    },
+    {
       title: '状态',
       key: 'status',
       render: (_, task) => <StatusBadge status={statusOf(data.statuses, task.id)} />,
@@ -192,9 +197,9 @@ export default function TasksPage() {
         }
         return (
           <Space>
-            <Button onClick={() => setRunTaskId(task.id)}>运行</Button>
+            <Button type="primary" onClick={() => setRunTaskId(task.id)}>运行</Button>
             <Button onClick={() => setPreviewTaskId(task.id)}>预览</Button>
-            <Button onClick={() => setToolsTaskId(task.id)}>工具</Button>
+            <Button type="text" onClick={() => setToolsTaskId(task.id)}>工具</Button>
           </Space>
         )
       },
@@ -209,7 +214,7 @@ export default function TasksPage() {
           任务可在“配置”页添加或调整；保存后重启服务生效。此面板用于查看当前运行状态和手动触发。
         </Typography.Text>
       </Typography.Paragraph>
-      <Table<TaskConfig> rowKey="id" pagination={false} columns={columns} dataSource={data.tasks} />
+      <Table<TaskConfig> rowKey="id" pagination={false} columns={columns} dataSource={data.tasks} scroll={{ x: 900 }} />
       <RunTaskModal
         key={runTaskId ?? ''}
         taskId={runTaskId}

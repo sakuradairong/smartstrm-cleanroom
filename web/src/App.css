@@ -1,0 +1,76 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-brand {
+  padding: 16px;
+  font-weight: 600;
+}
+
+.app-main-layout,
+.app-content {
+  min-width: 0;
+}
+
+.app-content {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.app-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 32px;
+  margin-bottom: 8px;
+}
+
+.app-menu-button {
+  display: none;
+}
+
+.app-footer {
+  padding: 20px 16px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.app-navigation-drawer .ant-drawer-body {
+  padding: 0;
+}
+
+@media (max-width: 767px) {
+  .app-content {
+    padding: 16px;
+  }
+
+  .app-toolbar {
+    justify-content: space-between;
+    min-height: 40px;
+    margin-bottom: 12px;
+  }
+
+  .app-menu-button {
+    display: inline-flex;
+  }
+
+  .app-footer {
+    padding: 16px;
+    font-size: 12px;
+  }
+}

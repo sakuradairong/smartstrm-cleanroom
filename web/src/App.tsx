@@ -1,13 +1,15 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router'
-import { App as AntApp, Button, ConfigProvider, Layout, Menu, theme as antdTheme } from 'antd'
-import { DashboardOutlined, FolderOpenOutlined, HistoryOutlined, MoonOutlined, SettingOutlined, SunOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { App as AntApp, Button, ConfigProvider, Drawer, Layout, Menu, theme as antdTheme } from 'antd'
+import zhCN from 'antd/locale/zh_CN'
+import { DashboardOutlined, FolderOpenOutlined, HistoryOutlined, MenuOutlined, MoonOutlined, SettingOutlined, SunOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useTheme } from './theme'
 import DashboardPage from './pages/DashboardPage'
 import TasksPage from './pages/TasksPage'
 import StorageBrowserPage from './pages/StorageBrowserPage'
 import HistoryPage from './pages/HistoryPage'
 import ConfigPage from './pages/ConfigPage'
+import './App.css'
 
 const { Sider, Content, Footer } = Layout
 
@@ -29,23 +31,42 @@ function selectedKey(pathname: string): string {
 export default function App() {
   const { mode, toggle } = useTheme()
   const location = useLocation()
+  const [navigationOpen, setNavigationOpen] = useState(false)
   const algorithm = useMemo(
     () => (mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm),
     [mode],
   )
+  useEffect(() => setNavigationOpen(false), [location.pathname])
+
+  const navigation = (
+    <Menu
+      theme={mode === 'dark' ? 'dark' : 'light'}
+      mode="inline"
+      selectedKeys={[selectedKey(location.pathname)]}
+      items={NAV_ITEMS}
+      onClick={() => setNavigationOpen(false)}
+    />
+  )
+
   return (
-    <ConfigProvider theme={{ algorithm }}>
+    <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ algorithm }}>
       <AntApp>
-        <Layout style={{ minHeight: '100vh' }}>
-          <Sider breakpoint="md" collapsedWidth={0} width={200}>
-            <div style={{ padding: 16, fontWeight: 600 }}>SmartStrm</div>
-            <Menu theme={mode === 'dark' ? 'dark' : 'light'} mode="inline" selectedKeys={[selectedKey(location.pathname)]} items={NAV_ITEMS} />
+        <Layout className="app-shell">
+          <Sider className="app-sider" breakpoint="md" collapsedWidth={0} trigger={null} width={200}>
+            <div className="app-brand">SmartStrm</div>
+            {navigation}
           </Sider>
-          <Layout>
-            <Content style={{ padding: 16, maxWidth: 1400, width: '100%', margin: '0 auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <Layout className="app-main-layout">
+            <Content className="app-content">
+              <header className="app-toolbar">
+                <Button
+                  className="app-menu-button"
+                  aria-label="打开导航菜单"
+                  icon={<MenuOutlined />}
+                  onClick={() => setNavigationOpen(true)}
+                />
                 <Button aria-label="切换主题" icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />} onClick={toggle} />
-              </div>
+              </header>
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/tasks" element={<TasksPage />} />
@@ -55,10 +76,21 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Content>
-            <Footer style={{ textAlign: 'center' }}>
+            <Footer className="app-footer">
               Copyright © 2025 SmartStrm Clean-room contributors · <a href="https://github.com/sakuradairong/smartstrm-cleanroom" target="_blank" rel="noopener noreferrer">获取对应源码</a> · <a href="https://github.com/sakuradairong/smartstrm-cleanroom/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a> · 本程序不提供任何担保
             </Footer>
           </Layout>
+          <Drawer
+            className="app-navigation-drawer"
+            title="SmartStrm 导航"
+            placement="left"
+            width={240}
+            open={navigationOpen}
+            onClose={() => setNavigationOpen(false)}
+            destroyOnHidden
+          >
+            {navigation}
+          </Drawer>
         </Layout>
       </AntApp>
     </ConfigProvider>

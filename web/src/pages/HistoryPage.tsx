@@ -4,6 +4,30 @@ import type { TableProps } from 'antd'
 import type { HistoryEvent } from '../api/types'
 import { useHistoryStream } from '../hooks/useHistoryStream'
 
+const EVENT_LABELS: Record<string, string> = {
+  queued: '已排队',
+  started: '已开始',
+  completed: '已完成',
+  failed: '失败',
+  stopped: '已停止',
+}
+
+function formatTimestamp(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return timestamp
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? ''
+  return `${value('year')}-${value('month')}-${value('day')} ${value('hour')}:${value('minute')}:${value('second')}`
+}
+
 // 与旧 UI 运行时（renderIndexHTML 注入后的 renderHistory）一致：
 // 有错误显示 error + 失败计数，否则显示各项计数（含失败）
 function resultText(event: HistoryEvent): string {
@@ -22,7 +46,7 @@ export default function HistoryPage() {
     {
       title: '时间',
       key: 'timestamp',
-      render: (_, event) => new Date(event.timestamp).toLocaleString(),
+      render: (_, event) => formatTimestamp(event.timestamp),
     },
     { title: '任务', dataIndex: 'task_id', key: 'task_id' },
     {
@@ -30,7 +54,7 @@ export default function HistoryPage() {
       key: 'type',
       render: (_, event) => (
         <Tag color={event.type === 'failed' ? 'red' : event.type === 'completed' ? 'green' : undefined}>
-          {event.type}
+          {EVENT_LABELS[event.type] ?? event.type}
         </Tag>
       ),
     },
@@ -57,7 +81,14 @@ export default function HistoryPage() {
           {connected ? '实时连接已建立' : '实时连接重试中…'}
         </Typography.Text>
       </Space>
-      <Table<HistoryEvent> rowKey="id" pagination={false} columns={columns} dataSource={events} />
+      <Table<HistoryEvent>
+        rowKey="id"
+        pagination={false}
+        columns={columns}
+        dataSource={events}
+        locale={{ emptyText: '暂无运行日志' }}
+        scroll={{ x: 760 }}
+      />
     </>
   )
 }

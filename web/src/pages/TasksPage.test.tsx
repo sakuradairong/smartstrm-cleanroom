@@ -90,6 +90,9 @@ test('渲染任务行与状态徽标', async () => {
   expect(screen.getByText('运行中')).toBeInTheDocument()
   expect(screen.getByText('队列 2')).toBeInTheDocument()
   expect(screen.getByText(/任务可在“配置”页添加或调整/)).toBeInTheDocument()
+  expect(screen.getAllByText('0 */6 * * *')).toHaveLength(2)
+  expect(screen.getAllByRole('button', { name: /运\s*行/ })[0]).toHaveClass('ant-btn-primary')
+  expect(screen.getAllByRole('button', { name: /工\s*具/ })[0]).toHaveClass('ant-btn-text')
 })
 
 test('点击运行调用 run 接口并显示成功消息', async () => {

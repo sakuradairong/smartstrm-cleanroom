@@ -1,16 +1,19 @@
 import { useCallback, useState } from 'react'
 import { NavLink } from 'react-router'
-import { Alert, App, Button, Card, Col, Empty, Row, Space, Spin, Statistic, Table, Typography } from 'antd'
+import { Alert, App, Button, Card, Empty, Space, Spin, Statistic, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { getOverview } from '../api/bootstrap'
 import type { HistoryEvent, Overview } from '../api/types'
 import { usePolling } from '../hooks/usePolling'
+import './DashboardPage.css'
+
+const eventLabel = (type: string) => ({ queued: '已排队', started: '已开始', completed: '已完成', failed: '失败', stopped: '已停止' })[type] ?? type
 
 const historyColumns: ColumnsType<HistoryEvent> = [
   { title: '时间', dataIndex: 'timestamp', render: value => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },
   { title: '任务', dataIndex: 'task_id' },
-  { title: '事件', dataIndex: 'type' },
+  { title: '事件', dataIndex: 'type', render: eventLabel },
   {
     title: '结果',
     render: (_, event) => event.error || [
@@ -48,13 +51,13 @@ export default function DashboardPage() {
       <Typography.Title level={2}>仪表盘</Typography.Title>
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {overview ? <>
-        <Row gutter={[16, 16]}>
-          <Col xs={12} md={6}><Card><Statistic title="任务总数" value={overview.tasks.total} /></Card></Col>
-          <Col xs={12} md={6}><Card><Statistic title="运行中" value={overview.tasks.running} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-          <Col xs={12} md={6}><Card><Statistic title="失败" value={overview.tasks.failed} valueStyle={{ color: '#cf1322' }} /></Card></Col>
-          <Col xs={12} md={6}><Card><Statistic title="队列" value={overview.tasks.queued} /></Card></Col>
-          <Col xs={12} md={6}><Card><Statistic title="存储总数" value={overview.storages} /></Card></Col>
-        </Row>
+        <div className="dashboard-stats">
+          <Card className="dashboard-stat"><Statistic title="任务总数" value={overview.tasks.total} /></Card>
+          <Card className="dashboard-stat"><Statistic title="运行中" value={overview.tasks.running} valueStyle={{ color: '#3f8600' }} /></Card>
+          <Card className="dashboard-stat"><Statistic title="失败" value={overview.tasks.failed} valueStyle={{ color: '#cf1322' }} /></Card>
+          <Card className="dashboard-stat"><Statistic title="队列" value={overview.tasks.queued} /></Card>
+          <Card className="dashboard-stat"><Statistic title="存储总数" value={overview.storages} /></Card>
+        </div>
         <Card title="最近运行">
           <Table
             rowKey="id"

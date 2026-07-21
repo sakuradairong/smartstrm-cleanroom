@@ -51,7 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('渲染初始历史行，格式与旧 UI 一致', async () => {
+test('渲染初始历史行，时间与事件使用中文界面格式', async () => {
   stubFetch((url) => {
     if (url === '/api/history?limit=200') {
       return {
@@ -70,8 +70,11 @@ test('渲染初始历史行，格式与旧 UI 一致', async () => {
   expect(screen.getByText('生成 1 / 复制 2 / 删除 3 / 跳过 4 / 失败 0')).toBeInTheDocument()
   // 有 error 时显示 error + 失败计数
   expect(screen.getByText('磁盘已满 / 失败 0')).toBeInTheDocument()
-  expect(screen.getByText('completed')).toBeInTheDocument()
-  expect(screen.getByText('failed')).toBeInTheDocument()
+  expect(screen.getAllByText('2026-07-20 10:00:00')).toHaveLength(2)
+  expect(screen.getByText('已完成')).toBeInTheDocument()
+  expect(screen.getByText('失败')).toBeInTheDocument()
+  expect(screen.queryByText('completed')).not.toBeInTheDocument()
+  expect(screen.queryByText('failed')).not.toBeInTheDocument()
 })
 
 test('SSE 注入新事件后新行出现在最前', async () => {

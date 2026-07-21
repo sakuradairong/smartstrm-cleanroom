@@ -25,8 +25,46 @@
   outline: 2px solid rgb(5 145 255 / 10%);
 }
 
+.config-section-nav {
+  position: sticky;
+  top: 8px;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+}
+
+.config-save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 9;
+  box-shadow: 0 -4px 18px rgb(0 0 0 / 14%);
+}
+
+#config-basic,
+#config-storages,
+#config-tasks,
+#config-advanced {
+  scroll-margin-top: 64px;
+}
+
 @media (max-width: 640px) {
   .config-grid {
     grid-template-columns: 1fr;
+  }
+
+  .config-section-nav {
+    position: static;
+    width: 100%;
+  }
+
+  .config-save-bar {
+    bottom: 8px;
   }
 }

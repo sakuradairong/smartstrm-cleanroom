@@ -8,6 +8,7 @@ import ContextMenu from '../components/ContextMenu'
 import EntryIcon, { isMediaEntry } from '../components/EntryIcon'
 import BatchRenameModal from './BatchRenameModal'
 import TmdbModal from './TmdbModal'
+import './StorageBrowserPage.css'
 
 export const collator = new Intl.Collator('zh', { numeric: true, sensitivity: 'base' })
 
@@ -413,65 +414,69 @@ export default function StorageBrowserPage() {
   return (
     <>
       <h2>存储浏览</h2>
-      <Space wrap style={{ marginBottom: 8 }}>
-        <Select
-          aria-label="存储"
-          placeholder="存储"
-          style={{ minWidth: 160 }}
-          value={storageId || undefined}
-          options={storages.map((s) => ({ value: s.id, label: `${s.id} (${s.type})` }))}
-          onChange={(id) => {
-            // 存储立即切换（与旧 storageSelect.value 语义一致），browse 成功后 navRef 再整体更新
-            navRef.current = { storageId: id, path: navRef.current.path }
-            setStorageId(id)
-            void browse('/', id)
-          }}
-        />
-        <Input
-          aria-label="路径"
-          style={{ width: 260 }}
-          value={pathInput}
-          onChange={(e) => setPathInput(e.target.value)}
-          onPressEnter={() => void browse(pathInput || '/')}
-        />
-        <Button onClick={() => void browse(pathInput || '/')}>前往</Button>
-        <Button onClick={() => void browse(parentPath(path))}>上一级</Button>
-        {matchingTasks.length > 0 && <Button onClick={() => void runCurrent()}>运行当前</Button>}
-        <Input
-          placeholder="筛选"
-          allowClear
-          style={{ width: 180 }}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <Select
-          aria-label="名称列宽"
-          style={{ width: 130 }}
-          value={nameWidth}
-          options={[
-            { value: 220, label: '紧凑 220' },
-            { value: 320, label: '标准 320' },
-            { value: 420, label: '加宽 420' },
-          ]}
-          onChange={changeNameWidth}
-        />
-        <Button onClick={() => setMkdirOpen(true)}>新建目录</Button>
-        <Button onClick={() => setBatchRenameOpen(true)}>批量命名</Button>
-        {/* 与旧 UI 的 TMDB 门控一致：未配置 API Key 时禁用并提示 */}
-        <Tooltip title={tmdbConfigured ? undefined : 'TMDB API Key 未配置，请在配置页设置后重启服务'}>
-          <Button disabled={!tmdbConfigured} onClick={() => setTmdbOpen(true)}>
-            影视识别
-          </Button>
-        </Tooltip>
-        <span role="status" aria-live="polite">
-          显示 {filtered.length} / 共 {entries.length} 项
-        </span>
-      </Space>
+      <div className="storage-toolbar">
+        <div className="storage-toolbar-group storage-location" role="group" aria-label="位置导航">
+          <Select
+            aria-label="存储"
+            placeholder="存储"
+            value={storageId || undefined}
+            options={storages.map((s) => ({ value: s.id, label: `${s.id} (${s.type})` }))}
+            onChange={(id) => {
+              // 存储立即切换（与旧 storageSelect.value 语义一致），browse 成功后 navRef 再整体更新
+              navRef.current = { storageId: id, path: navRef.current.path }
+              setStorageId(id)
+              void browse('/', id)
+            }}
+          />
+          <Input
+            aria-label="路径"
+            value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)}
+            onPressEnter={() => void browse(pathInput || '/')}
+          />
+          <Button onClick={() => void browse(pathInput || '/')}>前往</Button>
+          <Button onClick={() => void browse(parentPath(path))}>上一级</Button>
+        </div>
+        <div className="storage-toolbar-group storage-display" role="group" aria-label="筛选和显示">
+          <Input
+            placeholder="筛选"
+            allowClear
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <Select
+            aria-label="名称列宽"
+            value={nameWidth}
+            options={[
+              { value: 220, label: '紧凑 220' },
+              { value: 320, label: '标准 320' },
+              { value: 420, label: '加宽 420' },
+            ]}
+            onChange={changeNameWidth}
+          />
+        </div>
+        <div className="storage-toolbar-group storage-actions" role="group" aria-label="目录操作">
+          {matchingTasks.length > 0 && <Button type="primary" onClick={() => void runCurrent()}>运行当前</Button>}
+          <Button onClick={() => setMkdirOpen(true)}>新建目录</Button>
+          <Button onClick={() => setBatchRenameOpen(true)}>批量命名</Button>
+          {/* 与旧 UI 的 TMDB 门控一致：未配置 API Key 时禁用并提示 */}
+          <Tooltip title={tmdbConfigured ? undefined : 'TMDB API Key 未配置，请在配置页设置后重启服务'}>
+            <Button disabled={!tmdbConfigured} onClick={() => setTmdbOpen(true)}>影视识别</Button>
+          </Tooltip>
+        </div>
+        <div className="storage-toolbar-status">
+          <span role="status" aria-live="polite">显示 {filtered.length} / 共 {entries.length} 项</span>
+          {!tmdbConfigured && <Typography.Text type="secondary">未配置 TMDB API Key</Typography.Text>}
+        </div>
+      </div>
       <Table<StorageEntry>
+        className="storage-table"
         rowKey="path"
         pagination={false}
         columns={columns}
         dataSource={sorted}
+        locale={{ emptyText: <Typography.Text type="secondary">当前目录为空</Typography.Text> }}
+        scroll={{ x: nameWidth + 720 }}
         onChange={onTableChange}
         onRow={(entry) => {
           // 与旧 UI 一致：仅媒体行有右键菜单、tabIndex 与 aria-haspopup

@@ -48,13 +48,20 @@ afterEach(() => vi.unstubAllGlobals())
 
 test('加载并渲染四个配置卡片', async () => {
   stubFetch()
-  renderPage()
+  const { container } = renderPage()
   expect(await screen.findByText('基础启动配置')).toBeInTheDocument()
   expect(screen.getAllByText('存储').length).toBeGreaterThan(0)
-  expect(screen.getByText('生成任务')).toBeInTheDocument()
-  expect(screen.getByText('高级能力')).toBeInTheDocument()
+  expect(screen.getAllByText('生成任务')).toHaveLength(2)
+  expect(screen.getAllByText('高级能力')).toHaveLength(2)
   expect(screen.getByText(':8024')).toBeInTheDocument()
   expect(screen.getByText('https://strm.example')).toBeInTheDocument()
+  const navigation = screen.getByRole('navigation', { name: '配置区块导航' })
+  for (const section of [/基础配置/, /存\s*储/, /生成任务/, /高级能力/]) {
+    expect(within(navigation).getByRole('button', { name: section })).toBeInTheDocument()
+  }
+  expect(container.querySelector('.config-save-bar')).toBeInTheDocument()
+  expect(screen.getAllByRole('columnheader', { name: '标识' })).toHaveLength(2)
+  expect(screen.getByRole('columnheader', { name: '根路径 / 服务地址' })).toBeInTheDocument()
 })
 
 test('存储表格渲染已有存储', async () => {

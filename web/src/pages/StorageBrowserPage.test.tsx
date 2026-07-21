@@ -75,13 +75,17 @@ afterEach(() => {
 
 test('加载存储并浏览根目录', async () => {
   stubBase()
-  renderPage()
+  const { container } = renderPage()
   expect(await screen.findByText('a.mkv')).toBeInTheDocument()
   expect(screen.getByText('b.mkv')).toBeInTheDocument()
   expect(screen.getByText('movies')).toBeInTheDocument()
   expect(screen.getByText('目录')).toBeInTheDocument()
   expect(screen.getAllByText('文件')).toHaveLength(2)
   expect(screen.getByRole('status')).toHaveTextContent('显示 3 / 共 3 项')
+  expect(screen.getByRole('group', { name: '位置导航' })).toBeInTheDocument()
+  expect(screen.getByRole('group', { name: '筛选和显示' })).toBeInTheDocument()
+  expect(screen.getByRole('group', { name: '目录操作' })).toBeInTheDocument()
+  expect(container.querySelector('.storage-table .ant-table-content')).toHaveStyle({ overflowX: 'auto' })
 })
 
 test('筛选输入本地过滤并显示计数', async () => {
@@ -106,7 +110,7 @@ test('点击名称表头切换排序方向', async () => {
   expect(within(rows[0]).getByText('a.mkv')).toBeInTheDocument()
   expect(within(rows[1]).getByText('b.mkv')).toBeInTheDocument()
   expect(within(rows[2]).getByText('movies')).toBeInTheDocument()
-  await user.click(screen.getByText('名称'))
+  await user.click(screen.getAllByRole('columnheader', { name: /名称/ })[0])
   await waitFor(() => {
     rows = bodyRows()
     expect(within(rows[0]).getByText('movies')).toBeInTheDocument()
@@ -124,6 +128,28 @@ test('筛选词大小写不敏感', async () => {
   expect(screen.getByText('a.mkv')).toBeInTheDocument()
   expect(screen.getByText('b.mkv')).toBeInTheDocument()
   expect(screen.queryByText('movies')).not.toBeInTheDocument()
+})
+
+test('空目录显示中文空态', async () => {
+  stubFetch((url) => {
+    if (url === '/api/storages') return { body: STORAGES }
+    if (url === ENTRIES_URL) return { body: [] }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  renderPage()
+  expect(await screen.findByText('当前目录为空')).toBeInTheDocument()
+  expect(screen.queryByText('No data')).not.toBeInTheDocument()
+})
+
+test('TMDB 未配置时直接显示禁用原因', async () => {
+  stubBase((url) => {
+    if (url === '/api/bootstrap') return { body: { tmdb_configured: false } }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  renderPage()
+  const button = await screen.findByRole('button', { name: '影视识别' })
+  await waitFor(() => expect(button).toBeDisabled())
+  expect(screen.getByText('未配置 TMDB API Key')).toBeInTheDocument()
 })
 
 test('重命名流程：modal 输入新名后调用 rename 接口', async () => {

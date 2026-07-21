@@ -15,14 +15,16 @@ function renderPage(body: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals())
 
 test('渲染状态卡片与最近运行记录', async () => {
-  renderPage({
+  const { container } = renderPage({
     tasks: { total: 2, running: 1, failed: 0, queued: 1 }, storages: 2,
     history: [{ id: 7, timestamp: '2026-07-20T10:00:00Z', task_id: 'movies', type: 'completed', created: 3, copied: 1, removed: 0, skipped: 2, failed: 0 }],
   })
   expect(await screen.findByText('任务总数')).toBeInTheDocument()
   for (const title of ['运行中', '失败', '队列', '存储总数', '最近运行']) expect(screen.getByText(title)).toBeInTheDocument()
+  expect(container.querySelector('.dashboard-stats')).toBeInTheDocument()
+  expect(container.querySelectorAll('.dashboard-stat')).toHaveLength(5)
   const row = screen.getByText('movies').closest('tr')!
-  expect(within(row).getByText('completed')).toBeInTheDocument()
+  expect(within(row).getByText('已完成')).toBeInTheDocument()
   expect(within(row).getByText(/新增 3.*复制 1.*删除 0.*跳过 2.*失败 0/)).toBeInTheDocument()
 })
 

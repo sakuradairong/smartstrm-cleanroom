@@ -213,10 +213,10 @@ export default function ConfigPage() {
   }
 
   const columns: ColumnsType<StorageConfig> = [
-    { title: 'ID', dataIndex: 'id' },
+    { title: '标识', dataIndex: 'id' },
     { title: '类型', dataIndex: 'type' },
     {
-      title: 'Root / Endpoint',
+      title: '根路径 / 服务地址',
       render: (_, storage) => (
         <Space direction="vertical" size={0}>
           {storage.root ? <span>{storage.root}</span> : null}
@@ -243,7 +243,7 @@ export default function ConfigPage() {
   ]
 
   const taskColumns: ColumnsType<TaskConfig> = [
-    { title: 'ID', dataIndex: 'id' },
+    { title: '标识', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '存储', dataIndex: 'storage_id' },
     { title: '源路径', dataIndex: 'source' },
@@ -273,15 +273,27 @@ export default function ConfigPage() {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Typography.Title level={2}>配置</Typography.Title>
+      <nav className="config-section-nav" aria-label="配置区块导航">
+        {[
+          ['config-basic', '基础配置'],
+          ['config-storages', '存储'],
+          ['config-tasks', '生成任务'],
+          ['config-advanced', '高级能力'],
+        ].map(([id, label]) => (
+          <Button key={id} size="small" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })}>
+            {label}
+          </Button>
+        ))}
+      </nav>
       {error ? <Alert type="error" showIcon message={error} /> : null}
-      <Card title="基础启动配置" extra={(
+      <Card id="config-basic" title="基础启动配置" extra={(
         <Popconfirm
           title="生成新 Webhook Token？当前 Token 在重启后失效。"
           okText="确定"
           cancelText="取消"
           onConfirm={() => void resetToken()}
         >
-          <Button danger>重置 Webhook Token</Button>
+          <Button type="text" danger>重置 Webhook Token</Button>
         </Popconfirm>
       )}>
         <Descriptions column={{ xs: 1, sm: 2, lg: 4 }}>
@@ -292,7 +304,7 @@ export default function ConfigPage() {
         </Descriptions>
       </Card>
 
-      <Card title="存储" extra={<Button type="primary" onClick={() => setStorageIndex(-1)}>添加存储</Button>}>
+      <Card id="config-storages" title="存储" extra={<Button type="primary" onClick={() => setStorageIndex(-1)}>添加存储</Button>}>
         <Table
           rowKey="id"
           columns={columns}
@@ -302,7 +314,7 @@ export default function ConfigPage() {
           scroll={{ x: 700 }}
         />
       </Card>
-      <Card title="生成任务" extra={<Button type="primary" onClick={addTask}>添加任务</Button>}>
+      <Card id="config-tasks" title="生成任务" extra={<Button type="primary" onClick={addTask}>添加任务</Button>}>
         <Table
           rowKey="id"
           columns={taskColumns}
@@ -312,7 +324,7 @@ export default function ConfigPage() {
           scroll={{ x: 900 }}
         />
       </Card>
-      <Card title="高级能力">
+      <Card id="config-advanced" title="高级能力">
         <Typography.Paragraph type="secondary">
           TMDB、历史、媒体工具、媒体代理、外部路径映射及全局插件。JSON 区域只覆盖对应区块。
         </Typography.Paragraph>
@@ -360,7 +372,7 @@ export default function ConfigPage() {
         </div>
       </Card>
 
-      <Card>
+      <Card className="config-save-bar">
         <Space wrap>
           <Button type="primary" loading={saving} disabled={saving || !dirty} onClick={() => void save()}>
             验证并保存全部设置

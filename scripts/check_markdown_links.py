@@ -15,7 +15,7 @@ SKIP_PREFIXES = ("#", "http://", "https://", "mailto:", "data:")
 
 
 def markdown_files() -> list[Path]:
-    excluded = {".git", "runtime", "artifacts"}
+    excluded = {".git", "runtime", "artifacts", "node_modules"}
     return sorted(
         path
         for path in ROOT.rglob("*.md")

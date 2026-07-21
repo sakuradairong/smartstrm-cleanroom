@@ -20,5 +20,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    // Ant Design mounts substantial portal/style trees in jsdom. Full-suite
+    // parallel runs need more than Vitest's 5s default on constrained CI.
+    testTimeout: 15_000,
   },
 })

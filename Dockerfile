@@ -1,3 +1,10 @@
+FROM node:22-bookworm AS web
+WORKDIR /build
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci
+COPY web ./web
+RUN cd web && npm run build
+
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -5,6 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+COPY --from=web /build/internal/app/ui/dist internal/app/ui/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /smartstrm ./cmd/smartstrm
 
 FROM alpine:3.21

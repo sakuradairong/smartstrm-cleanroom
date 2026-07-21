@@ -21,6 +21,24 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+      - name: Type-check web UI
+        run: npm run typecheck
+        working-directory: web
+      - name: Test web UI
+        run: npm run test:unit
+        working-directory: web
+      - name: Build web UI
+        run: npm run build
+        working-directory: web
       - name: Set up Go
         uses: actions/setup-go@v6
         with:

@@ -2,6 +2,7 @@
 .pi
 runtime
 artifacts
+web/node_modules
 *.md
 !LICENSE
 config.json

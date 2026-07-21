@@ -11,13 +11,19 @@
 
 ## 本地开发
 
-要求 Go 1.23、Docker Engine 和 Docker Compose v2。封面提取测试需要 `ffmpeg`。
+要求 Go 1.23、Node.js 22、Docker Engine 和 Docker Compose v2。封面提取测试需要 `ffmpeg`。
 
 ```bash
 git clone https://github.com/sakuradairong/smartstrm-cleanroom.git
 cd smartstrm-cleanroom
 go mod download
 go test ./...
+cd web
+npm ci
+npm run typecheck
+npm run test:unit
+npm run build
+cd ..
 ```
 
 建议从短生命周期分支提交更改：
@@ -42,6 +48,12 @@ find cmd internal -type f -name '*.go' -print0 | xargs -0 gofmt -w
 go mod tidy
 go vet ./...
 go test -race ./...
+cd web
+npm ci
+npm run typecheck
+npm run test:unit
+npm run build
+cd ..
 python3 -m json.tool config.example.json >/dev/null
 docker compose config -q
 git diff --check

@@ -198,10 +198,17 @@ find cmd internal -type f -name '*.go' -print0 | xargs -0 gofmt -w
 go mod tidy
 go vet ./...
 go test -race ./...
+cd web && npm ci
+npm run typecheck
+npm run test:unit
+npm run build
+cd ..
 python3 -m json.tool config.example.json >/dev/null
 docker compose config -q
 git diff --check
 ```
+
+前端要求 Node.js 22。Vite 产物由 `go:embed` 嵌入 Go 二进制，`internal/app/ui/dist/` 是本地生成目录，不提交到 Git。
 
 构建与冒烟：
 

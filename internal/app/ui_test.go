@@ -66,3 +66,13 @@ func TestSPAWithoutBuildReturns503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
 }
+
+func TestAppRootServesAuthenticatedSPA(t *testing.T) {
+	application := &App{spaHandler: newTestSPA(t).handler()}
+	application.handler = application.routes()
+	rec := httptest.NewRecorder()
+	application.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "<body>app</body>")
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+}

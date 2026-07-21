@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -36,7 +35,6 @@ type App struct {
 	manager    *task.Manager
 	tmdb       *tmdb.Client
 	history    *history.Store
-	uiHTML     string
 	spaHandler http.Handler
 	configMu   sync.Mutex
 	handler    http.Handler
@@ -72,11 +70,6 @@ func New(cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, spaHandler: embeddedSPA().handler()}
-	uiHTML, err := renderIndexHTML(application.tmdbConfigured())
-	if err != nil {
-		return nil, err
-	}
-	application.uiHTML = uiHTML
 	application.handler = application.routes()
 	return application, nil
 }
@@ -86,8 +79,7 @@ func (a *App) Handler() http.Handler           { return a.handler }
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /", a.basicAuth(http.HandlerFunc(a.home)))
-	mux.Handle("GET /ui/new/", a.basicAuth(http.StripPrefix("/ui/new", a.spaHandler)))
+	mux.Handle("GET /", a.basicAuth(a.spaHandler))
 	mux.HandleFunc("GET /robots.txt", robots)
 	mux.HandleFunc("GET /favicon.ico", emptyFavicon)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -136,61 +128,6 @@ func (a *App) routes() http.Handler {
 	mux.Handle("OPTIONS /webhook/{token}/moviepilot", webhookCORS(http.HandlerFunc(webhookOptions)))
 	mux.HandleFunc("GET /stream/{storage}", a.stream)
 	return requestLog(mux)
-}
-
-func (a *App) home(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, a.uiHTML)
-}
-
-func renderIndexHTML(tmdbConfigured bool) (string, error) {
-	buttonAnchor := `<button onclick="tmdbRecognize()">影视识别</button>`
-	functionAnchor := `async function tmdbRecognize(){const query=prompt('影视名称');`
-	filterAnchor := `<input id="filterInput" placeholder="当前目录筛选" oninput="renderEntries()">`
-	browseAnchor := `<button onclick="browse(pathInput.value)">前往</button>`
-	renderAnchor := `renderEntries=function(){const q=filterInput.value.toLowerCase(),items=currentEntries.filter(x=>x.name.toLowerCase().includes(q)).slice().sort(compareStorageEntries);`
-	rowAnchor := `return '<tr><td>'+label`
-	errorResultAnchor := `result=x.error||(`
-	resultAnchor := `+' / 删除 '+(x.result?.removed||0))`
-	historyErrorAnchor := `esc(e.error||(`
-	historyResultAnchor := `+' / 跳过 '+(e.skipped||0)))`
-	historyEventAnchor := `if(!historyEvents.some(x=>x.id===item.id)){historyEvents.unshift(item);historyEvents=historyEvents.slice(0,200);renderHistory()}`
-	historyLoadAnchor := `async function loadHistory(){`
-	styleAnchor := `#storageTable td:last-child{white-space:nowrap}</style>`
-	sectionAnchor := `</table></div></section>
-<section id="configView"`
-	scriptAnchor := `</script></html>`
-	pollAnchor := `load();setInterval(load,3000)`
-	if strings.Count(indexHTML, buttonAnchor) != 1 || strings.Count(indexHTML, functionAnchor) != 1 || strings.Count(indexHTML, filterAnchor) != 1 || strings.Count(indexHTML, browseAnchor) != 1 || strings.Count(indexHTML, renderAnchor) != 1 || strings.Count(indexHTML, rowAnchor) != 1 || strings.Count(indexHTML, errorResultAnchor) != 1 || strings.Count(indexHTML, resultAnchor) != 1 || strings.Count(indexHTML, historyErrorAnchor) != 1 || strings.Count(indexHTML, historyResultAnchor) != 1 || strings.Count(indexHTML, historyEventAnchor) != 1 || strings.Count(indexHTML, historyLoadAnchor) != 1 || strings.Count(indexHTML, styleAnchor) != 1 || strings.Count(indexHTML, sectionAnchor) != 1 || strings.Count(indexHTML, scriptAnchor) != 1 || strings.Count(indexHTML, pollAnchor) != 2 {
-		return "", fmt.Errorf("management UI injection anchors are invalid")
-	}
-	status := ""
-	if !tmdbConfigured {
-		status = "TMDB API Key 未配置，请在配置页设置后重启服务"
-	}
-	result := strings.Replace(indexHTML, buttonAnchor, buttonAnchor+`<span id="tmdbStatus" class="muted">`+status+`</span>`, 1)
-	preflight := "const tmdbConfigured=" + strconv.FormatBool(tmdbConfigured) + `;async function tmdbRecognize(){if(!tmdbConfigured){alert('TMDB API Key 未配置，请在配置页设置后重启服务');return}const query=prompt('影视名称');`
-	result = strings.Replace(result, functionAnchor, preflight, 1)
-	result = strings.Replace(result, filterAnchor, filterAnchor+`<span id="storageCount" class="muted" role="status" aria-live="polite"></span>`, 1)
-	result = strings.Replace(result, browseAnchor, browseAnchor+`<button id="runCurrentButton" class="hidden" onclick="runCurrentDirectory()">运行当前</button>`, 1)
-	countUpdate := renderAnchor + `storageCount.textContent='显示 '+items.length+' / 共 '+currentEntries.length+' 项';`
-	result = strings.Replace(result, renderAnchor, countUpdate, 1)
-	result = strings.Replace(result, rowAnchor, `return '<tr'+(storageIsMedia(x)?' tabindex="0" aria-haspopup="menu" data-entry-index="'+i+'"':'')+'><td>'+label`, 1)
-	result = strings.Replace(result, errorResultAnchor, `result=x.error?x.error+' / 失败 '+(x.result?.failed||0):(`, 1)
-	result = strings.Replace(result, resultAnchor, `+' / 删除 '+(x.result?.removed||0)+' / 失败 '+(x.result?.failed||0))`, 1)
-	result = strings.Replace(result, historyErrorAnchor, `esc(e.error?e.error+' / 失败 '+(e.failed||0):(`, 1)
-	result = strings.Replace(result, historyResultAnchor, `+' / 跳过 '+(e.skipped||0)+' / 失败 '+(e.failed||0)))`, 1)
-	result = strings.Replace(result, historyEventAnchor, `queueHistoryEvent(item)`, 1)
-	result = strings.Replace(result, historyLoadAnchor, `async function loadHistory(){clearPendingHistoryEvents();`, 1)
-	menuCSS := `#storageTable td:last-child{white-space:nowrap}.storage-menu{position:fixed;z-index:1000;min-width:170px;padding:.35rem;background:#202832;border:1px solid #596675;border-radius:8px;box-shadow:0 8px 24px #0008}.storage-menu button{display:block;width:100%;text-align:left;background:transparent}.storage-menu button:hover,.storage-menu button:focus{background:#1685f8}</style>`
-	result = strings.Replace(result, styleAnchor, menuCSS, 1)
-	menuHTML := `</table></div><div id="storageContextMenu" class="storage-menu hidden" role="menu" aria-label="文件操作"><button id="storageContextCopy" role="menuitem">复制STRM地址</button></div></section>
-<section id="configView"`
-	result = strings.Replace(result, sectionAnchor, menuHTML, 1)
-	result = strings.ReplaceAll(result, pollAnchor, "")
-	settingsJS := `function captureAdvancedDraft(){return[tmdbApiKey.value,tmdbLanguage.value,tmdbCacheMinutes.value,tmdbBaseURL.value,tmdbImageBaseURL.value,tmdbProxyURL.value,historyPath.value,historyMaxEntries.value,ffmpegPath.value,mediaTimeout.value,mediaProxyEnabled.checked,mediaProxyListen.value,mediaProxyUpstream.value,mediaProxyType.value,mediaProxyRewrite.checked,cloudDriveMappings.value,moviePilotMappings.value,globalPlugins.value]}function restoreAdvancedDraft(v){[tmdbApiKey.value,tmdbLanguage.value,tmdbCacheMinutes.value,tmdbBaseURL.value,tmdbImageBaseURL.value,tmdbProxyURL.value,historyPath.value,historyMaxEntries.value,ffmpegPath.value,mediaTimeout.value,mediaProxyEnabled.checked,mediaProxyListen.value,mediaProxyUpstream.value,mediaProxyType.value,mediaProxyRewrite.checked,cloudDriveMappings.value,moviePilotMappings.value,globalPlugins.value]=v}const editStorageBase=editStorage;editStorage=function(index){editStorageBase(index);storageConfigID.disabled=index>=0};const saveStorageBase=saveStorage;saveStorage=function(event){const draft=captureAdvancedDraft(),type=storageConfigType.value,index=editingStorage<0?managedConfig.storages.length:editingStorage;saveStorageBase(event);const item=managedConfig.storages[index];if(item){if(type==='local')item.endpoint='';if(type!=='webdav')item.username=item.password='';if(type!=='openlist')item.token='';if(type==='ani_open')item.root='';renderManagedConfig()}restoreAdvancedDraft(draft)};const deleteStorageBase=deleteStorage;deleteStorage=function(index){const draft=captureAdvancedDraft();deleteStorageBase(index);restoreAdvancedDraft(draft)};const saveTaskBase=saveTask;saveTask=function(event){const draft=captureAdvancedDraft();saveTaskBase(event);restoreAdvancedDraft(draft)};const deleteTaskBase=deleteTask;deleteTask=function(index){const draft=captureAdvancedDraft();deleteTaskBase(index);restoreAdvancedDraft(draft)};`
-	menuJS := `let historyPending=[],historyPendingIDs=new Set(),historyRenderFrame=0;function clearPendingHistoryEvents(){if(historyRenderFrame)cancelAnimationFrame(historyRenderFrame);historyRenderFrame=0;historyPending=[];historyPendingIDs.clear()}function queueHistoryEvent(item){if(historyPendingIDs.has(item.id)||historyEvents.some(x=>x.id===item.id))return;if(historyPending.length===200){historyPendingIDs.delete(historyPending.shift().id)}historyPending.push(item);historyPendingIDs.add(item.id);if(!historyRenderFrame)historyRenderFrame=requestAnimationFrame(flushHistoryEvents)}function flushHistoryEvents(){historyRenderFrame=0;if(!historyPending.length)return;const known=new Set(historyEvents.map(x=>x.id));for(const item of historyPending){if(!known.has(item.id)){historyEvents.unshift(item);known.add(item.id)}}historyPending=[];historyPendingIDs.clear();historyEvents=historyEvents.slice(0,200);renderHistory()}let taskPollTimer=0,taskPollRunning=false;async function taskPollCycle(){if(taskPollRunning||document.hidden)return;taskPollRunning=true;try{await load()}finally{taskPollRunning=false}if(!document.hidden){clearTimeout(taskPollTimer);taskPollTimer=setTimeout(taskPollCycle,3000)}}document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(taskPollTimer);else taskPollCycle()});taskPollCycle();let currentMatchingTasks=[];async function loadCurrentTasks(remotePath,storageID){runCurrentButton.classList.add('hidden');currentMatchingTasks=[];try{const matches=await api('/api/storages/'+encodeURIComponent(storageID)+'/matching-tasks?path='+encodeURIComponent(remotePath));if(pathInput.value!==remotePath||storageSelect.value!==storageID)return;currentMatchingTasks=matches;runCurrentButton.classList.toggle('hidden',!matches.length)}catch{runCurrentButton.classList.add('hidden')}}const browseEntries=browse;browse=async function(path){const remotePath=path||'/',storageID=storageSelect.value;await browseEntries(remotePath);if(pathInput.value===remotePath&&storageSelect.value===storageID)await loadCurrentTasks(remotePath,storageID)};async function runCurrentDirectory(){const task=currentMatchingTasks[0];if(!task)return;const remotePath=pathInput.value;try{await api('/api/tasks/'+encodeURIComponent(task.id)+'/run',{method:'POST',...body({path:remotePath})});alert('已将 '+(task.name||task.id)+' 的当前目录加入队列')}catch(e){alert(e.message)}}function storageIsMedia(item){return storageFileIcon(item)==='🎬'}let storageContextIndex=-1;function closeStorageContextMenu(){storageContextMenu.classList.add('hidden');storageContextIndex=-1}function openStorageContextMenu(event,row){closeStorageContextMenu();if(!row)return;const index=Number(row.dataset.entryIndex),item=currentEntries[index];if(!item||!storageIsMedia(item))return;event.preventDefault();storageContextIndex=index;storageContextMenu.classList.remove('hidden');const width=storageContextMenu.offsetWidth,height=storageContextMenu.offsetHeight,rect=row.getBoundingClientRect(),keyboard=event.type==='keydown',x=keyboard?rect.left+20:event.clientX,y=keyboard?rect.top+20:event.clientY;storageContextMenu.style.left=Math.max(8,Math.min(x,innerWidth-width-8))+'px';storageContextMenu.style.top=Math.max(8,Math.min(y,innerHeight-height-8))+'px';storageContextCopy.focus()}entries.addEventListener('contextmenu',event=>openStorageContextMenu(event,event.target.closest('tr')));entries.addEventListener('keydown',event=>{if(event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10'))openStorageContextMenu(event,event.target.closest('tr'))});storageContextCopy.addEventListener('click',async()=>{const index=storageContextIndex;closeStorageContextMenu();if(index>=0)await copyURL(index)});document.addEventListener('pointerdown',event=>{if(!storageContextMenu.contains(event.target))closeStorageContextMenu()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeStorageContextMenu()});` + scriptAnchor
-	return strings.Replace(result, scriptAnchor, settingsJS+menuJS, 1), nil
 }
 
 func robots(w http.ResponseWriter, _ *http.Request) {
@@ -1616,11 +1553,8 @@ func writeError(w http.ResponseWriter, status int, err error) {
 func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
 }
-
-//go:embed ui/index.html
-var indexHTML string

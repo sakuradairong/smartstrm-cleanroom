@@ -23,62 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRenderIndexHTMLTMDBConfigurationWarning(t *testing.T) {
-	unconfigured, err := renderIndexHTML(false)
-	require.NoError(t, err)
-	assert.Contains(t, unconfigured, `id="tmdbStatus"`)
-	assert.Contains(t, unconfigured, "TMDB API Key 未配置，请在配置页设置后重启服务")
-	assert.Contains(t, unconfigured, "const tmdbConfigured=false")
-	assert.Contains(t, unconfigured, "if(!tmdbConfigured){alert(")
-	assert.Contains(t, unconfigured, `id="storageCount"`)
-	assert.Contains(t, unconfigured, `aria-live="polite"`)
-	assert.Contains(t, unconfigured, "storageCount.textContent='显示 '+items.length+' / 共 '+currentEntries.length+' 项'")
-	assert.Contains(t, unconfigured, `id="storageContextMenu"`)
-	assert.Contains(t, unconfigured, `role="menuitem">复制STRM地址`)
-	assert.Contains(t, unconfigured, `storageIsMedia(x)?' tabindex="0" aria-haspopup="menu" data-entry-index="'+i+'"':'')`)
-	assert.Contains(t, unconfigured, `function storageIsMedia(item){return storageFileIcon(item)==='🎬'}`)
-	assert.Contains(t, unconfigured, `event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10')`)
-	assert.Contains(t, unconfigured, `id="runCurrentButton" class="hidden"`)
-	assert.Contains(t, unconfigured, `/matching-tasks?path=`)
-	assert.Contains(t, unconfigured, `const task=currentMatchingTasks[0]`)
-	assert.NotContains(t, unconfigured, `setInterval(load,3000)`)
-	assert.Equal(t, 1, strings.Count(unconfigured, `setTimeout(taskPollCycle,3000)`))
-	assert.Contains(t, unconfigured, `if(taskPollRunning||document.hidden)return`)
-	assert.Contains(t, unconfigured, `document.addEventListener('visibilitychange'`)
-	assert.NotContains(t, unconfigured, `historyEvents.unshift(item);historyEvents=historyEvents.slice(0,200);renderHistory()`)
-	assert.Contains(t, unconfigured, `queueHistoryEvent(item)`)
-	assert.Contains(t, unconfigured, `requestAnimationFrame(flushHistoryEvents)`)
-	assert.Contains(t, unconfigured, `if(historyPending.length===200)`)
-	assert.Contains(t, unconfigured, `async function loadHistory(){clearPendingHistoryEvents();`)
-	assert.Contains(t, unconfigured, `+' / 失败 '+(x.result?.failed||0)`)
-	assert.Contains(t, unconfigured, `result=x.error?x.error+' / 失败 '+(x.result?.failed||0):(`)
-	assert.Contains(t, unconfigured, `esc(e.error?e.error+' / 失败 '+(e.failed||0):(`)
-	assert.Contains(t, unconfigured, `+' / 跳过 '+(e.skipped||0)+' / 失败 '+(e.failed||0)`)
-	assert.Contains(t, unconfigured, `href="https://github.com/sakuradairong/smartstrm-cleanroom"`)
-	assert.Contains(t, unconfigured, `AGPL-3.0-only`)
-	assert.Contains(t, unconfigured, `本程序不提供任何担保`)
-	assert.Contains(t, unconfigured, `id="managedStorageRows"`)
-	assert.Contains(t, unconfigured, `id="managedTaskRows"`)
-	assert.Contains(t, unconfigured, `onclick="editStorage(-1)"`)
-	assert.Contains(t, unconfigured, `onclick="editTask(-1)"`)
-	assert.Contains(t, unconfigured, `/api/config/managed`)
-	assert.Contains(t, unconfigured, `配置文件只需保留监听地址、公开地址、管理员和 Webhook Token`)
-	assert.NotContains(t, unconfigured, `id="configEditor"`)
-	assert.Contains(t, unconfigured, `id="managedStorageRows"`)
-	assert.Contains(t, unconfigured, `id="managedTaskRows"`)
-	assert.Contains(t, unconfigured, `onclick="editStorage(-1)"`)
-	assert.Contains(t, unconfigured, `onclick="editTask(-1)"`)
-	assert.Contains(t, unconfigured, `/api/config/managed`)
-	assert.Contains(t, unconfigured, `配置文件只需保留监听地址、公开地址、管理员和 Webhook Token`)
-	assert.NotContains(t, unconfigured, `id="configEditor"`)
-
-	configured, err := renderIndexHTML(true)
-	require.NoError(t, err)
-	assert.Contains(t, configured, `id="tmdbStatus" class="muted"></span>`)
-	assert.Contains(t, configured, "const tmdbConfigured=true")
-	assert.Equal(t, 1, strings.Count(configured, "async function tmdbRecognize()"))
-}
-
 func TestMatchingTasksAPIUsesPathBoundariesAndSpecificity(t *testing.T) {
 	application, err := New(config.Config{
 		PublicURL: "http://localhost", WebhookToken: "secret",
@@ -142,15 +86,26 @@ func TestHomeTMDBStatusDoesNotExposeAPIKey(t *testing.T) {
 	response := httptest.NewRecorder()
 	application.Handler().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
-	assert.NotContains(t, response.Body.String(), "tmdbConfigured")
+	assert.NotContains(t, response.Body.String(), apiKey)
 
 	request = httptest.NewRequest(http.MethodGet, "/", nil)
 	request.SetBasicAuth("admin", "password")
 	response = httptest.NewRecorder()
 	application.Handler().ServeHTTP(response, request)
-	assert.Equal(t, http.StatusOK, response.Code)
-	assert.Contains(t, response.Body.String(), "const tmdbConfigured=true")
+	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable}, response.Code)
 	assert.NotContains(t, response.Body.String(), apiKey)
+}
+
+func TestSecurityHeadersIncludeStrictCSP(t *testing.T) {
+	application, err := New(config.Config{PublicURL: "http://localhost", WebhookToken: "secret"})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'", response.Header().Get("Content-Security-Policy"))
+	assert.Equal(t, "nosniff", response.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "no-referrer", response.Header().Get("Referrer-Policy"))
 }
 
 func TestHTTPAuthenticationWebhookStreamAndEmbyDelete(t *testing.T) {

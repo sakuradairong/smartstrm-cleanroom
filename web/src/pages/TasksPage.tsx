@@ -70,10 +70,51 @@ function RunTaskModal({ taskId, onClose, onRan }: { taskId: string | null; onClo
   )
 }
 
-function StrmPreviewModal({ content, onClose }: { content: unknown; onClose: () => void }) {
+function StrmPreviewModal({ taskId, onClose }: { taskId: string | null; onClose: () => void }) {
+  const { message } = App.useApp()
+  const [path, setPath] = useState('')
+  const [content, setContent] = useState<unknown>(null)
+  const [loading, setLoading] = useState(false)
+
+  const generate = async () => {
+    const sourcePath = path.trim()
+    if (!taskId || !sourcePath || loading) return
+    setLoading(true)
+    try {
+      const query = new URLSearchParams({ path: sourcePath })
+      setContent(await getJSON(`/api/tasks/${encodeURIComponent(taskId)}/preview?${query.toString()}`))
+    } catch (err) {
+      message.error((err as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
-    <Modal title="STRM 生成预览" open={content !== null} onCancel={onClose} footer={null} width={720}>
-      <pre>{JSON.stringify(content, null, 2)}</pre>
+    <Modal
+      title="STRM 生成预览"
+      open={taskId !== null}
+      onCancel={onClose}
+      width={720}
+      footer={(
+        <Space>
+          <Button onClick={onClose} disabled={loading}>取消</Button>
+          <Button type="primary" loading={loading} disabled={!path.trim()} onClick={() => void generate()}>
+            生成预览
+          </Button>
+        </Space>
+      )}
+    >
+      <Typography.Paragraph type="secondary">
+        输入任务存储中的具体媒体文件路径；预览不会写入文件或修改远端。
+      </Typography.Paragraph>
+      <Input
+        aria-label="源文件路径"
+        placeholder="例如 /movies/example.mkv"
+        value={path}
+        onChange={(event) => setPath(event.target.value)}
+      />
+      {content !== null ? <pre>{JSON.stringify(content, null, 2)}</pre> : null}
     </Modal>
   )
 }
@@ -84,7 +125,7 @@ export default function TasksPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [runTaskId, setRunTaskId] = useState<string | null>(null)
   const [toolsTaskId, setToolsTaskId] = useState<string | null>(null)
-  const [preview, setPreview] = useState<unknown>(null)
+  const [previewTaskId, setPreviewTaskId] = useState<string | null>(null)
 
   const load = async () => {
     try {
@@ -100,17 +141,6 @@ export default function TasksPage() {
     try {
       await postJSON(`/api/tasks/${taskId}/stop`, {})
       await load()
-    } catch (err) {
-      message.error((err as Error).message)
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const openPreview = async (taskId: string) => {
-    setActionLoading(`${taskId}:preview`)
-    try {
-      setPreview(await getJSON(`/api/tasks/${taskId}/preview`))
     } catch (err) {
       message.error((err as Error).message)
     } finally {
@@ -163,9 +193,7 @@ export default function TasksPage() {
         return (
           <Space>
             <Button onClick={() => setRunTaskId(task.id)}>运行</Button>
-            <Button loading={actionLoading === `${task.id}:preview`} onClick={() => void openPreview(task.id)}>
-              预览
-            </Button>
+            <Button onClick={() => setPreviewTaskId(task.id)}>预览</Button>
             <Button onClick={() => setToolsTaskId(task.id)}>工具</Button>
           </Space>
         )
@@ -195,7 +223,11 @@ export default function TasksPage() {
         onClose={() => setToolsTaskId(null)}
         onChanged={() => void load()}
       />
-      <StrmPreviewModal content={preview} onClose={() => setPreview(null)} />
+      <StrmPreviewModal
+        key={previewTaskId ?? ''}
+        taskId={previewTaskId}
+        onClose={() => setPreviewTaskId(null)}
+      />
     </>
   )
 }

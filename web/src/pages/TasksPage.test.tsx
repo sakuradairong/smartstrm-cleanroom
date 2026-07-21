@@ -147,17 +147,44 @@ test('预览打开对话框显示返回内容', async () => {
   const preview = { target: '/strm/movies', total: 1, files: [{ path: '/movies/a.mkv', strm: '/strm/movies/a.strm' }] }
   stubFetch((url) => {
     if (url === '/api/tasks') return { body: data }
-    if (url === '/api/tasks/t1/preview') return { body: preview }
+    if (url === '/api/tasks/t1/preview?path=%2F%E7%94%B5%E5%BD%B1%2F%E7%83%AD%E9%97%A8.mkv') {
+      return { body: preview }
+    }
     throw new Error('unexpected fetch: ' + url)
   })
   const user = userEvent.setup()
   renderPage()
   await user.click(await screen.findByRole('button', { name: /预\s*览/ }))
-  await screen.findByRole('dialog')
+  const dialog = await screen.findByRole('dialog')
+  await user.type(within(dialog).getByLabelText('源文件路径'), '/电影/热门.mkv')
+  await user.click(within(dialog).getByRole('button', { name: '生成预览' }))
   await waitFor(() => {
     const pre = document.querySelector('.ant-modal pre')
     expect(pre?.textContent).toBe(JSON.stringify(preview, null, 2))
   })
+})
+
+test('预览失败显示错误并解除按钮 loading', async () => {
+  const data: TasksResponse = { tasks: [makeTask()], statuses: [makeStatus()] }
+  stubFetch((url) => {
+    if (url === '/api/tasks') return { body: data }
+    if (url === '/api/tasks/t1/preview?path=%2Fmovies%2Fa.mkv') {
+      return { status: 400, body: { error: 'preview failed' } }
+    }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  const user = userEvent.setup()
+  renderPage()
+  const previewButton = await screen.findByRole('button', { name: /预\s*览/ })
+  await user.click(previewButton)
+  const dialog = await screen.findByRole('dialog')
+  const pathInput = within(dialog).getByLabelText('源文件路径')
+  await user.type(pathInput, '/movies/a.mkv')
+  const submit = within(dialog).getByRole('button', { name: '生成预览' })
+  await user.click(submit)
+  expect(await screen.findByText('preview failed')).toBeInTheDocument()
+  await waitFor(() => expect(submit).not.toHaveClass('ant-btn-loading'))
+  expect(pathInput).toHaveValue('/movies/a.mkv')
 })
 
 test('接口错误显示后端 error 文案', async () => {

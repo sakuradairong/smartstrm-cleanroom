@@ -1404,6 +1404,37 @@ func TestConcurrentRequestsDuringReloadAreRaceFree(t *testing.T) {
 	group.Wait()
 }
 
+// TestConfigWatcherDetectsEditMadeImmediatelyAfterStart pins the watcher's
+// baseline handoff. Sampling the baseline inside the watcher goroutine loses
+// any edit that lands before the goroutine is scheduled, which silently drops a
+// configuration change instead of reloading it.
+func TestConfigWatcherDetectsEditMadeImmediatelyAfterStart(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	firstRoot, secondRoot := t.TempDir(), t.TempDir()
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost", WebhookToken: "token",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: firstRoot}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	candidate := disk.Clone()
+	candidate.Storages[0].Root = secondRoot
+	// Write with no delay after Start so the watcher goroutine may not have run.
+	require.NoError(t, application.Start(ctx))
+	require.NoError(t, config.Save(configPath, candidate))
+
+	require.Eventually(t, func() bool {
+		application.runtimeMu.RLock()
+		defer application.runtimeMu.RUnlock()
+		local, ok := application.storages["media"].(*storage.Local)
+		return ok && local.Root() == secondRoot
+	}, 6*time.Second, 50*time.Millisecond)
+}
+
 func quoteJSON(value string) string {
 	var buffer bytes.Buffer
 	buffer.WriteByte('"')

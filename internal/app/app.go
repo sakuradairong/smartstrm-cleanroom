@@ -132,7 +132,10 @@ func (a *App) Start(ctx context.Context) error {
 	a.runtimeCtx, a.runtimeStop = runtimeCtx, stop
 	a.rootCtx = ctx
 	if a.configPath != "" {
-		go a.watchConfigFile(ctx, a.configPath)
+		// Read the baseline before the watcher goroutine is scheduled. Sampling it
+		// inside the goroutine would race with an edit made right after startup:
+		// that edit would become the baseline and never trigger a reload.
+		go a.watchConfigFile(ctx, a.configPath, fileSignature(a.configPath))
 	}
 	return nil
 }
@@ -216,10 +219,9 @@ func (a *App) waitForRetiredManager(manager *task.Manager) {
 	manager.Wait()
 }
 
-func (a *App) watchConfigFile(ctx context.Context, configPath string) {
+func (a *App) watchConfigFile(ctx context.Context, configPath string, lastSignature string) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	lastSignature := fileSignature(configPath)
 	for {
 		select {
 		case <-ctx.Done():

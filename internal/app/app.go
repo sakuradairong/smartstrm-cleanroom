@@ -146,6 +146,23 @@ func (a *App) withRuntime(next http.Handler) http.Handler {
 	})
 }
 
+// streamRuntime snapshots the runtime values a stream needs. Streaming and SSE
+// run for the lifetime of a transfer or subscription, so they must not hold the
+// runtime lock: doing so would block every configuration reload for that long.
+// Reload publishes replacement values instead of mutating them in place, so a
+// snapshot taken here stays internally consistent for the whole request.
+func (a *App) streamRuntime() (map[string]storage.Storage, string) {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	return a.storages, a.config.WebhookToken
+}
+
+func (a *App) historyStore() *history.Store {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	return a.history
+}
+
 func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
 	restartNeeded := restartRequired(a.bootConfig, candidate)
 	a.runtimeMu.RLock()
@@ -984,14 +1001,15 @@ func (a *App) streamHistory(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return true
 	}
-	for _, event := range reverseHistory(a.history.Snapshot(r.URL.Query().Get("task_id"), 50)) {
+	store := a.historyStore()
+	for _, event := range reverseHistory(store.Snapshot(r.URL.Query().Get("task_id"), 50)) {
 		if !writeSSE(event) {
 			return
 		}
 	}
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
-	events := a.history.Subscribe(r.Context())
+	events := store.Subscribe(r.Context())
 	for {
 		select {
 		case <-r.Context().Done():
@@ -1671,7 +1689,8 @@ func (a *App) deleteFromSTRM(ctx context.Context, strmPath string) error {
 
 func (a *App) stream(w http.ResponseWriter, r *http.Request) {
 	storageID := r.PathValue("storage")
-	instance, exists := a.storages[storageID]
+	storages, webhookToken := a.streamRuntime()
+	instance, exists := storages[storageID]
 	if !exists {
 		writeError(w, http.StatusNotFound, fmt.Errorf("unknown storage"))
 		return
@@ -1681,7 +1700,7 @@ func (a *App) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if !signature.Valid(a.config.WebhookToken, storageID, signedValue, r.URL.Query().Get("sig")) {
+	if !signature.Valid(webhookToken, storageID, signedValue, r.URL.Query().Get("sig")) {
 		writeError(w, http.StatusUnauthorized, fmt.Errorf("invalid stream signature"))
 		return
 	}
@@ -1754,15 +1773,20 @@ func (a *App) validToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(a.config.WebhookToken)) == 1
 }
 
+// basicAuth reads the boot-time administrator credentials. Reload deliberately
+// preserves the process-owned Admin block instead of replacing it, so this is a
+// stable value that needs no runtime lock. Taking one here would also deadlock,
+// because basicAuth already runs inside withRuntime's read lock on most routes.
 func (a *App) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.config.Admin.Username == "" {
+		admin := a.bootConfig.Admin
+		if admin.Username == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		username, password, ok := r.BasicAuth()
-		validUser := subtle.ConstantTimeCompare([]byte(username), []byte(a.config.Admin.Username)) == 1
-		validPass := subtle.ConstantTimeCompare([]byte(password), []byte(a.config.Admin.Password)) == 1
+		validUser := subtle.ConstantTimeCompare([]byte(username), []byte(admin.Username)) == 1
+		validPass := subtle.ConstantTimeCompare([]byte(password), []byte(admin.Password)) == 1
 		if !ok || !validUser || !validPass {
 			w.Header().Set("WWW-Authenticate", `Basic realm="SmartStrm"`)
 			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))

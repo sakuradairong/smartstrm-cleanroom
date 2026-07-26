@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1337,6 +1339,69 @@ func TestOverviewAggregatesState(t *testing.T) {
 	assert.Equal(t, 0, summary.Tasks.Failed)
 	assert.Equal(t, 0, summary.Tasks.Queued)
 	assert.NotNil(t, summary.History)
+}
+
+// TestConcurrentRequestsDuringReloadAreRaceFree covers the routes that are not
+// wrapped in withRuntime. They read runtime state that a configuration reload
+// replaces, so without an explicit snapshot they race the reload goroutine.
+// Run with -race; the assertions only keep the requests honest.
+func TestConcurrentRequestsDuringReloadAreRaceFree(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(source, "movie.mkv"), []byte("video-data"), 0o644))
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.json")
+	cfg := config.Config{
+		Version: config.CurrentVersion, PublicURL: "http://localhost:8024", WebhookToken: "webhook-secret",
+		Admin:    config.AdminConfig{Username: "admin", Password: "password"},
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: source}},
+		Tasks:    []config.TaskConfig{{ID: "movies", StorageID: "media", Source: "/", Destination: filepath.Join(directory, "strm")}},
+		History:  config.HistoryConfig{Path: filepath.Join(directory, "history.jsonl"), MaxEntries: 50},
+		Path:     configPath,
+	}
+	require.NoError(t, config.Save(configPath, cfg))
+	application, err := New(cfg)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	signed := signature.Create("webhook-secret", "media", "/movie.mkv")
+	var group sync.WaitGroup
+	group.Add(3)
+	go func() {
+		defer group.Done()
+		for index := 0; index < 50; index++ {
+			request := httptest.NewRequest(http.MethodGet, "/stream/media?path=%2Fmovie.mkv&sig="+signed, nil)
+			response := httptest.NewRecorder()
+			application.Handler().ServeHTTP(response, request)
+			assert.Equal(t, http.StatusOK, response.Code)
+		}
+	}()
+	go func() {
+		defer group.Done()
+		for index := 0; index < 50; index++ {
+			streamCtx, streamCancel := context.WithCancel(context.Background())
+			request := httptest.NewRequest(http.MethodGet, "/api/history/stream", nil).WithContext(streamCtx)
+			request.SetBasicAuth("admin", "password")
+			finished := make(chan struct{})
+			go func() {
+				application.Handler().ServeHTTP(httptest.NewRecorder(), request)
+				close(finished)
+			}()
+			streamCancel()
+			<-finished
+		}
+	}()
+	go func() {
+		defer group.Done()
+		for index := 0; index < 50; index++ {
+			candidate := cfg.Clone()
+			candidate.Tasks[0].Name = "renamed-" + strconv.Itoa(index)
+			_, reloadErr := application.reloadRuntime(candidate)
+			assert.NoError(t, reloadErr)
+		}
+	}()
+	group.Wait()
 }
 
 func quoteJSON(value string) string {

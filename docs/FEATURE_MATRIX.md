@@ -5,7 +5,7 @@
 ## 存储与文件管理
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
-|---|---:|---|
+| --- | ---: | --- |
 | 本地存储 | ✅ | `internal/storage/local.go`；生命周期、边界与竞态测试；root 在保存/启动前必须绝对且非文件系统根，解析符号链接后重复校验；隐藏/拒读逃逸链接，Delete/Rename/Move 操作链接本身而不跟随目标，单元及容器外部目标完整性验证覆盖 |
 | WebDAV | ✅ | PROPFIND/DELETE/MKCOL/MOVE/Range 代理实验服务器测试；不依赖响应顺序，仅按规范化 href 跳过当前目录，兼容绝对 URL/路径、相对与 percent-encoded href、HTTP-date、RFC3339 UTC 和空修改时间 |
 | OpenList | ✅ | list/get/remove/mkdir/rename/move API 实验服务器测试；显式 200 条分页完整读取 450 条目录，支持 `total` 收敛、只在第一页强刷，并拒绝重复页、提前空页和超过 100,000 条的异常响应 |
@@ -29,7 +29,7 @@
 ## STRM 与任务
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
-|---|---:|---|
+| --- | ---: | --- |
 | 递归生成、增量生成、同步删除 | ✅ | `internal/task/generator.go` 与生成集成测试 |
 | 单条失败隔离 | ✅ | 单条改名、复制、子目录列表、STRM 内容或写入失败会继续处理兄弟条目，最终有界聚合并计入 `failed`；任何部分失败都会禁止同步删除，避免误删，且有竞态、容器和历史验证 |
 | 后缀、大小上下限、附属文件复制 | ✅ | 任务级配置和生成测试；同 stem 及 `.`/`-`/`_` 后缀元数据自动插入匹配媒体扩展名并保留大小写，已命名文件不重复插入，多媒体歧义不猜测，复制目标碰撞在写入前拒绝 |
@@ -48,7 +48,7 @@
 ## Webhook 与联动
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
-|---|---:|---|
+| --- | ---: | --- |
 | 通用任务 Webhook | ✅ | 支持旧版 `task_id/path` 及公开 `a_task` 路径、增量、保留资产、插件、扫描设置和延迟覆盖；确定性插件顺序、原子多任务入队、CORS Playground、配置不变与删除安全均有竞态/容器 E2E |
 | Emby 删除同步 | ✅ | 目标边界、签名 STRM 和真实源删除集成测试 |
 | QAS / CloudSaver | ✅ | 支持 `strmtask` 多任务、`savepath`、`xlist_path_fix`、延迟及官方 `refresh=true` OpenList 强刷协议测试 |
@@ -60,7 +60,7 @@
 ## 插件、识别与代理
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
-|---|---:|---|
+| --- | ---: | --- |
 | 文件名关键词过滤/替换 | ✅ | `filename_skip` 支持字面/正则、exclude/include、大小写与仅目录模式；祖先目录预览一致、旧 `skip_regex` 兼容、Webhook 临时覆盖和严格类型校验均有竞态/容器测试；`replace_regex` 生成测试 |
 | STRM 内容替换 | ✅ | 全局/任务生成期正则替换和工具箱批量替换测试 |
 | 非法文件名修正 | ✅ | 基础名/扩展名 Windows 非法字符、扩展名之后的尾空白、目录与文件远端改名、扩展名优先保留和 UTF-8 字节上限均有竞态及容器测试 |
@@ -71,13 +71,13 @@
 | TMDB 识别与模板 | 🟡 | API/代理、TTL 缓存、搜索、详情、剧集标题、`{title_original}`（movie `original_title`/TV `original_name`，空值回退显示标题）、模板变量提示与同源受限海报代理已实现；隔离协议服务 + 真实 Chrome 完成 movie/TV 搜索 prompt、年份、海报卡片、选择、模板、preview confirm、apply、目录刷新，以及 TV 集标题和空原始标题回退，网络均 200、console/page errors 为空，截图见 `artifacts/ui/tmdb-{movie,tv,fallback}-{results,applied}.png`；缺失 Key 时存储页主动提示且在 prompt 前中止，启动仅注入布尔状态不暴露 Key；真实 TMDB Key/实网限流和地区返回验证仍待完成 |
 | 本地/WebDAV 安全流代理 | ✅ | Range、Basic Auth 不泄露和协议测试 |
 | OpenList 302 | ✅ | raw URL 校验与重定向测试 |
-| Emby/Jellyfin/Plex/飞牛全站 302 代理 | 🟡 | 独立端口、固定上游、安全透传、流式响应、WebSocket、重定向回写和优雅关闭已完成；Emby/Jellyfin PlaybackInfo 已按公开协议做同源 HMAC STRM 改写，并通过 mock、竞态及容器到 OpenList 302 链路；真实客户端及 Plex/飞牛改写待完成 |
+| Emby/Jellyfin/Plex/飞牛全站 302 代理 | 🟡 | 独立端口、固定上游、安全透传、流式响应、WebSocket、重定向回写和优雅关闭已完成；Emby/Jellyfin PlaybackInfo 已按公开协议做同源 HMAC STRM 改写，并通过 mock、竞态及容器到 OpenList 302 链路；启用/停用、上游、服务器类型和改写开关已支持不重启热生效（仅监听端口因容器端口映射固定而仍需重启），已在真实容器上验证端口启停与容器未重启；改写已对照 Jellyfin 公开源码固化一致性测试（`DirectStreamUrl`/`AddApiKeyToDirectStreamUrl` 为 Emby 特有，Jellyfin 客户端经 `MediaSource.Path` 直连，GET/POST 两条路由及反代 base path 均覆盖）；真实客户端及 Plex/飞牛改写待完成 |
 | 首播优化、外部播放器、隐藏推广 | ⬜ | 各媒体服务器兼容实现和浏览器验证待完成 |
 
 ## 管理、部署与质量
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
-|---|---:|---|
+| --- | ---: | --- |
 | Basic Auth、Webhook 鉴权、安全响应头 | ✅ | HTTP 集成测试 |
 | robots.txt 禁止搜索收录 | ✅ | 公开、无认证挑战的全站 `Disallow: /` 响应，包含 MIME/缓存头与 HTTP/容器/浏览器验证 |
 | 任务与存储浏览 UI | ✅ | React SPA（Vite + antd）覆盖仪表盘、任务/工具、存储、实时日志与配置；单测、竞态、隔离 Docker、真实 Chrome 逐页交互、主题刷新持久化和 720px Sider 折叠均通过，且 console/page errors/网络失败为空 |

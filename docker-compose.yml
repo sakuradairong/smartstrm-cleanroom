@@ -5,6 +5,7 @@ services:
       args:
         GOPROXY: https://goproxy.cn,direct
     container_name: smartstrm-cleanroom
+    user: "10001:0"
     restart: unless-stopped
     ports:
       - "8024:8024"

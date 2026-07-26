@@ -1,5 +1,11 @@
 import '@testing-library/jest-dom/vitest'
 
+// jsdom reports the pseudo-element overload as "not implemented". Ant Design
+// only uses it while measuring scrollbars, so ignoring that optional argument
+// keeps test output useful without changing browser behavior.
+const getComputedStyle = window.getComputedStyle.bind(window)
+window.getComputedStyle = ((element: Element) => getComputedStyle(element)) as typeof window.getComputedStyle
+
 if (!window.matchMedia) {
   window.matchMedia = ((query: string) => ({
     matches: false,

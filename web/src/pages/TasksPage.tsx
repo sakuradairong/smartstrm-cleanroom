@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { App, Badge, Button, Input, Modal, Space, Table, Typography } from 'antd'
+import { useMemo, useState } from 'react'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { App, Badge, Button, Empty, Input, Modal, Space, Table, Typography } from 'antd'
 import type { TableProps } from 'antd'
+import { useNavigate } from 'react-router'
 import { getJSON, postJSON } from '../api/client'
 import type { TaskConfig, TaskResult, TaskStatus, TasksResponse } from '../api/types'
 import { usePolling } from '../hooks/usePolling'
@@ -26,9 +28,14 @@ function StatusBadge({ status }: { status?: TaskStatus }) {
   )
 }
 
-function ResultText({ result }: { result?: TaskResult }) {
+function ResultText({ result, error }: { result?: TaskResult; error?: string }) {
   const r = result ?? {}
-  return <span>生成 {r.created || 0} / 复制 {r.copied || 0} / 删除 {r.removed || 0} / 失败 {r.failed || 0}</span>
+  return (
+    <Space direction="vertical" size={0}>
+      {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
+      <span>生成 {r.created || 0} / 复制 {r.copied || 0} / 跳过 {r.skipped || 0} / 删除 {r.removed || 0} / 失败 {r.failed || 0}</span>
+    </Space>
+  )
 }
 
 function RunTaskModal({ taskId, onClose, onRan }: { taskId: string | null; onClose: () => void; onRan: () => Promise<void> }) {
@@ -121,11 +128,14 @@ function StrmPreviewModal({ taskId, onClose }: { taskId: string | null; onClose:
 
 export default function TasksPage() {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [data, setData] = useState<TasksResponse>({ tasks: [], statuses: [] })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [runTaskId, setRunTaskId] = useState<string | null>(null)
   const [toolsTaskId, setToolsTaskId] = useState<string | null>(null)
   const [previewTaskId, setPreviewTaskId] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = async () => {
     try {
@@ -135,6 +145,23 @@ export default function TasksPage() {
     }
   }
   usePolling(load, 3000)
+
+  const visibleTasks = useMemo(() => {
+    const keyword = filter.trim().toLocaleLowerCase()
+    if (!keyword) return data.tasks
+    return data.tasks.filter((task) => [task.name, task.id, task.storage_id, task.source]
+      .some((value) => value?.toLocaleLowerCase().includes(keyword)))
+  }, [data.tasks, filter])
+
+  const refresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await load()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const stopTask = async (taskId: string) => {
     setActionLoading(`${taskId}:stop`)
@@ -182,7 +209,10 @@ export default function TasksPage() {
     {
       title: '结果',
       key: 'result',
-      render: (_, task) => <ResultText result={statusOf(data.statuses, task.id)?.result} />,
+      render: (_, task) => {
+        const status = statusOf(data.statuses, task.id)
+        return <ResultText result={status?.result} error={status?.error} />
+      },
     },
     {
       title: '操作',
@@ -199,6 +229,9 @@ export default function TasksPage() {
           <Space>
             <Button type="primary" onClick={() => setRunTaskId(task.id)}>运行</Button>
             <Button onClick={() => setPreviewTaskId(task.id)}>预览</Button>
+            {statusOf(data.statuses, task.id)?.error ? (
+              <Button onClick={() => navigate(`/history?task_id=${encodeURIComponent(task.id)}`)}>查看日志</Button>
+            ) : null}
             <Button type="text" onClick={() => setToolsTaskId(task.id)}>工具</Button>
           </Space>
         )
@@ -207,32 +240,72 @@ export default function TasksPage() {
   ]
 
   return (
-    <>
-      <h2>任务</h2>
-      <Typography.Paragraph>
-        <Typography.Text type="secondary">
-          任务可在“配置”页添加或调整；保存后重启服务生效。此面板用于查看当前运行状态和手动触发。
+    <section className="management-page">
+      <header className="management-heading">
+        <div>
+          <h2>任务</h2>
+          <Typography.Text type="secondary">
+            在这里查看运行状态并手动触发；添加或调整任务后会立即动态生效。
+          </Typography.Text>
+        </div>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => navigate('/config?section=tasks&action=add-task')}
+        >
+          添加任务
+        </Button>
+      </header>
+      <Space className="management-toolbar" wrap>
+        <Input.Search
+          aria-label="筛选任务"
+          allowClear
+          placeholder="按名称、ID、存储或源路径筛选"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          style={{ width: 320 }}
+        />
+        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refresh()}>
+          刷新
+        </Button>
+        <Typography.Text type="secondary" aria-live="polite">
+          显示 {visibleTasks.length} / {data.tasks.length} 个任务
         </Typography.Text>
-      </Typography.Paragraph>
-      <Table<TaskConfig> rowKey="id" pagination={false} columns={columns} dataSource={data.tasks} scroll={{ x: 900 }} />
+      </Space>
+      <Table<TaskConfig>
+        rowKey="id"
+        pagination={false}
+        columns={columns}
+        dataSource={visibleTasks}
+        locale={{
+          emptyText: filter.trim()
+            ? <Empty description="没有匹配的任务" />
+            : (
+              <Empty description="还没有任务。任务用于扫描媒体并生成 STRM 文件。">
+                <Button type="primary" onClick={() => navigate('/config?section=tasks&action=add-task')}>创建第一个任务</Button>
+              </Empty>
+            ),
+        }}
+        scroll={{ x: 900 }}
+      />
       <RunTaskModal
-        key={runTaskId ?? ''}
+        key={`run:${runTaskId ?? 'closed'}`}
         taskId={runTaskId}
         onClose={() => setRunTaskId(null)}
         onRan={load}
       />
       <TaskToolsModal
-        key={toolsTaskId ?? ''}
+        key={`tools:${toolsTaskId ?? 'closed'}`}
         taskId={toolsTaskId ?? ''}
         open={toolsTaskId !== null}
         onClose={() => setToolsTaskId(null)}
         onChanged={() => void load()}
       />
       <StrmPreviewModal
-        key={previewTaskId ?? ''}
+        key={`preview:${previewTaskId ?? 'closed'}`}
         taskId={previewTaskId}
         onClose={() => setPreviewTaskId(null)}
       />
-    </>
+    </section>
   )
 }

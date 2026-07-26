@@ -20,6 +20,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    env: {
+      // Keep date rendering assertions deterministic across developer and CI
+      // machines while production continues to use the browser's local zone.
+      TZ: 'UTC',
+    },
     // Ant Design mounts substantial portal/style trees in jsdom. Full-suite
     // parallel runs need more than Vitest's 5s default on constrained CI.
     testTimeout: 15_000,

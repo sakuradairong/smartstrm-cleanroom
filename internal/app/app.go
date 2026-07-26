@@ -332,6 +332,8 @@ func (a *App) routes() http.Handler {
 	register("POST /api/tasks/{id}/covers", a.basicAuth(http.HandlerFunc(a.extractTaskCovers)))
 	register("GET /api/tasks/{id}/preview", a.basicAuth(http.HandlerFunc(a.previewTask)))
 	register("GET /api/storages", a.basicAuth(http.HandlerFunc(a.listStorages)))
+	register("GET /api/local-dirs", a.basicAuth(http.HandlerFunc(a.listLocalDirectories)))
+	register("POST /api/local-dirs", a.basicAuth(http.HandlerFunc(a.createLocalDirectory)))
 	register("GET /api/storages/{id}/entries", a.basicAuth(http.HandlerFunc(a.listEntries)))
 	register("GET /api/storages/{id}/matching-tasks", a.basicAuth(http.HandlerFunc(a.matchingTasks)))
 	register("GET /api/storages/{id}/stream-url", a.basicAuth(http.HandlerFunc(a.getStreamURL)))
@@ -533,6 +535,105 @@ func (a *App) listStorages(w http.ResponseWriter, _ *http.Request) {
 		result = append(result, storageSummary{ID: item.ID, Type: item.Type, Root: item.Root})
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+type localDirectory struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type localDirectoryListing struct {
+	Path        string           `json:"path"`
+	Parent      string           `json:"parent"`
+	Directories []localDirectory `json:"directories"`
+}
+
+// listLocalDirectories powers the STRM destination picker. Destinations are
+// server-side paths rather than storage paths, so they cannot be browsed with
+// the storage API. Only directories are returned; files stay invisible because
+// a destination can only ever be a directory.
+func (a *App) listLocalDirectories(w http.ResponseWriter, r *http.Request) {
+	requested := r.URL.Query().Get("path")
+	if requested == "" {
+		requested = string(filepath.Separator)
+	}
+	if len(requested) > 4096 || strings.ContainsRune(requested, '\x00') {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path is invalid"))
+		return
+	}
+	cleaned := filepath.Clean(requested)
+	if !filepath.IsAbs(cleaned) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path must be absolute"))
+		return
+	}
+	// Resolve symlinks before reading so a link cannot redirect the listing, then
+	// report the resolved location back to the client.
+	resolved := cleaned
+	if canonical, err := filepath.EvalSymlinks(cleaned); err == nil {
+		resolved = canonical
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Errorf("directory is not available"))
+		return
+	}
+	if !info.IsDir() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		return
+	}
+	items, err := os.ReadDir(resolved)
+	if err != nil {
+		writeError(w, http.StatusForbidden, fmt.Errorf("directory cannot be read"))
+		return
+	}
+	directories := make([]localDirectory, 0, len(items))
+	for _, item := range items {
+		child := filepath.Join(resolved, item.Name())
+		childInfo, statErr := os.Stat(child)
+		if statErr != nil || !childInfo.IsDir() {
+			continue
+		}
+		directories = append(directories, localDirectory{Name: item.Name(), Path: child})
+	}
+	sort.Slice(directories, func(i, j int) bool { return directories[i].Name < directories[j].Name })
+	parent := filepath.Dir(resolved)
+	if parent == resolved {
+		parent = ""
+	}
+	writeJSON(w, http.StatusOK, localDirectoryListing{Path: resolved, Parent: parent, Directories: directories})
+}
+
+func (a *App) createLocalDirectory(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if err := storage.ValidateName(body.Name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	parent := filepath.Clean(body.Path)
+	if !filepath.IsAbs(parent) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path must be absolute"))
+		return
+	}
+	if canonical, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = canonical
+	}
+	info, err := os.Stat(parent)
+	if err != nil || !info.IsDir() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("parent directory is not available"))
+		return
+	}
+	target := filepath.Join(parent, body.Name)
+	if err := os.Mkdir(target, 0o755); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("create directory: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, localDirectory{Name: body.Name, Path: target})
 }
 
 func (a *App) listEntries(w http.ResponseWriter, r *http.Request) {

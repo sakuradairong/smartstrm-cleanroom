@@ -1435,6 +1435,96 @@ func TestConfigWatcherDetectsEditMadeImmediatelyAfterStart(t *testing.T) {
 	}, 6*time.Second, 50*time.Millisecond)
 }
 
+func TestLocalDirectoryBrowsingListsOnlyDirectories(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "movies"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "series"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644))
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "secret",
+		Admin: config.AdminConfig{Username: "admin", Password: "password"},
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/local-dirs?path="+url.QueryEscape(root), nil)
+	request.SetBasicAuth("admin", "password")
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var listing struct {
+		Path        string `json:"path"`
+		Parent      string `json:"parent"`
+		Directories []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"directories"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &listing))
+	names := make([]string, 0, len(listing.Directories))
+	for _, item := range listing.Directories {
+		names = append(names, item.Name)
+	}
+	assert.Equal(t, []string{"movies", "series"}, names, "files must not be listed")
+	assert.NotEmpty(t, listing.Parent)
+}
+
+func TestLocalDirectoryBrowsingRequiresAuthentication(t *testing.T) {
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "secret",
+		Admin: config.AdminConfig{Username: "admin", Password: "password"},
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodGet, "/api/local-dirs?path=/", nil)
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+}
+
+func TestLocalDirectoryBrowsingRejectsInvalidPaths(t *testing.T) {
+	application, err := New(config.Config{PublicURL: "http://localhost", WebhookToken: "secret"})
+	require.NoError(t, err)
+	for name, target := range map[string]struct {
+		query  string
+		status int
+	}{
+		"relative":  {query: "relative/path", status: http.StatusBadRequest},
+		"missing":   {query: "/definitely/not/present/anywhere", status: http.StatusNotFound},
+		"not-a-dir": {query: "/etc/hostname", status: http.StatusBadRequest},
+		"null-byte": {query: "/tmp/\x00evil", status: http.StatusBadRequest},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/local-dirs?path="+url.QueryEscape(target.query), nil)
+		response := httptest.NewRecorder()
+		application.Handler().ServeHTTP(response, request)
+		assert.Equal(t, target.status, response.Code, "case %s returned %s", name, response.Body.String())
+	}
+}
+
+func TestCreateLocalDirectoryRejectsTraversalNames(t *testing.T) {
+	root := t.TempDir()
+	application, err := New(config.Config{PublicURL: "http://localhost", WebhookToken: "secret"})
+	require.NoError(t, err)
+	for _, name := range []string{"..", "../escape", "nested/child", ""} {
+		body := `{"path":` + quoteJSON(root) + `,"name":` + quoteJSON(name) + `}`
+		request := httptest.NewRequest(http.MethodPost, "/api/local-dirs", bytes.NewBufferString(body))
+		response := httptest.NewRecorder()
+		application.Handler().ServeHTTP(response, request)
+		assert.Equal(t, http.StatusBadRequest, response.Code, "name %q must be rejected", name)
+	}
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "no directory may be created by a rejected request")
+
+	body := `{"path":` + quoteJSON(root) + `,"name":"电影"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/local-dirs", bytes.NewBufferString(body))
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	info, err := os.Stat(filepath.Join(root, "电影"))
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+}
+
 func quoteJSON(value string) string {
 	var buffer bytes.Buffer
 	buffer.WriteByte('"')

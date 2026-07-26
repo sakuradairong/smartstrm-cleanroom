@@ -1,70 +1,89 @@
 .config-grid {
-  display: grid;
-  grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 2fr);
-  gap: 0.75rem 1rem;
-  align-items: center;
+	display: grid;
+	grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 2fr);
+	gap: 0.75rem 1rem;
+	align-items: center;
 }
 
 .config-grid > label {
-  font-weight: 500;
+	font-weight: 500;
 }
 
 .config-control {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 32px;
-  padding: 4px 11px;
-  color: inherit;
-  background: transparent;
-  border: 1px solid #8c8c8c;
-  border-radius: 6px;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 32px;
+	padding: 4px 11px;
+	color: inherit;
+	background: transparent;
+	border: 1px solid #8c8c8c;
+	border-radius: 6px;
+}
+
+/* One labelled setting: label on the left, control on the right. Each row is
+   self-contained so groups can be reordered without touching a shared grid. */
+.setting-row {
+	display: grid;
+	grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 2fr);
+	gap: 0.5rem 1rem;
+	align-items: center;
+	padding: 6px 0;
+}
+
+.setting-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 500;
+}
+
+.setting-hint-icon {
+	color: #8c8c8c;
+	cursor: help;
+}
+
+/* A setting whose control needs the full width, such as a mapping table. */
+.setting-block {
+	padding: 6px 0;
+}
+
+.setting-block > .setting-label {
+	margin-bottom: 8px;
 }
 
 .config-control:focus {
-  border-color: #1677ff;
-  outline: 2px solid rgb(5 145 255 / 10%);
+	border-color: #1677ff;
+	outline: 2px solid rgb(5 145 255 / 10%);
 }
 
-.config-section-nav {
-  position: sticky;
-  top: 8px;
-  z-index: 10;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 8px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-  border-radius: 8px;
-  backdrop-filter: blur(8px);
+.config-tabs > .ant-tabs-nav {
+	margin-bottom: 16px;
+}
+
+.config-tabs > .ant-tabs-content-holder,
+.config-tabs .ant-tabs-content,
+.config-tabs .ant-tabs-tabpane {
+	width: 100%;
 }
 
 .config-save-bar {
-  position: sticky;
-  bottom: 12px;
-  z-index: 9;
-  box-shadow: 0 -4px 18px rgb(0 0 0 / 14%);
-}
-
-#config-basic,
-#config-storages,
-#config-tasks,
-#config-advanced {
-  scroll-margin-top: 64px;
+	position: sticky;
+	bottom: 12px;
+	z-index: 9;
+	box-shadow: 0 -4px 18px rgb(0 0 0 / 14%);
 }
 
 @media (max-width: 640px) {
-  .config-grid {
-    grid-template-columns: 1fr;
-  }
+	.config-grid,
+	.setting-row {
+		grid-template-columns: 1fr;
+	}
 
-  .config-section-nav {
-    position: static;
-    width: 100%;
-  }
+	.config-tabs > .ant-tabs-nav .ant-tabs-nav-wrap {
+		overflow-x: auto;
+	}
 
-  .config-save-bar {
-    bottom: 8px;
-  }
+	.config-save-bar {
+		bottom: 8px;
+	}
 }

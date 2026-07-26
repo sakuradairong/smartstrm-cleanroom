@@ -2,6 +2,7 @@ import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import HistoryPage from './HistoryPage'
 import type { HistoryEvent } from '../api/types'
+import { MemoryRouter } from 'react-router'
 
 // jsdom 无 EventSource——注入可控 fake
 class FakeEventSource {
@@ -40,6 +41,10 @@ function stubFetch(handler: (url: string) => FetchResult) {
 // rAF stub 为 setTimeout(0)，配合真实定时器手动 flush，保证确定性
 const flushFrame = () => act(async () => { await new Promise(r => setTimeout(r, 0)) })
 
+function renderPage(initialEntry = '/history') {
+  return render(<MemoryRouter initialEntries={[initialEntry]}><HistoryPage /></MemoryRouter>)
+}
+
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -63,7 +68,7 @@ test('渲染初始历史行，时间与事件使用中文界面格式', async ()
     }
     throw new Error('unexpected fetch: ' + url)
   })
-  render(<HistoryPage />)
+  renderPage()
   expect(await screen.findByText('/movies/a.mkv')).toBeInTheDocument()
   expect(screen.getByText('/movies/b.mkv')).toBeInTheDocument()
   expect(screen.getByText('t2')).toBeInTheDocument()
@@ -82,7 +87,7 @@ test('SSE 注入新事件后新行出现在最前', async () => {
     if (url === '/api/history?limit=200') return { body: [makeEvent(1, { path: '/movies/a.mkv' })] }
     throw new Error('unexpected fetch: ' + url)
   })
-  render(<HistoryPage />)
+  renderPage()
   expect(await screen.findByText('/movies/a.mkv')).toBeInTheDocument()
   const es = FakeEventSource.instances[0]
   act(() => { es.onopen?.() })
@@ -100,7 +105,7 @@ test('断线显示重试中文案', async () => {
     if (url === '/api/history?limit=200') return { body: [] }
     throw new Error('unexpected fetch: ' + url)
   })
-  render(<HistoryPage />)
+  renderPage()
   // 连接建立前即显示重试中
   expect(await screen.findByText('实时连接重试中…')).toBeInTheDocument()
   const es = FakeEventSource.instances[0]
@@ -117,7 +122,7 @@ test('筛选按任务 ID 重新加载并重订阅', async () => {
     throw new Error('unexpected fetch: ' + url)
   })
   const user = userEvent.setup()
-  render(<HistoryPage />)
+  renderPage()
   expect(await screen.findByText('/movies/a.mkv')).toBeInTheDocument()
   await user.type(screen.getByPlaceholderText('任务 ID（留空显示全部）'), 't9')
   await user.click(screen.getByRole('button', { name: /筛\s*选/ }))
@@ -129,4 +134,20 @@ test('筛选按任务 ID 重新加载并重订阅', async () => {
   expect(FakeEventSource.instances).toHaveLength(2)
   expect(FakeEventSource.instances[0].closed).toBe(true)
   expect(FakeEventSource.instances[1].url).toBe('/api/history/stream?task_id=t9')
+})
+
+test('初始加载失败时显示错误并可重新加载', async () => {
+  let attempts = 0
+  stubFetch((url) => {
+    if (url !== '/api/history?limit=200') throw new Error('unexpected fetch: ' + url)
+    attempts += 1
+    return attempts === 1 ? { status: 500, body: { error: '日志服务暂时不可用' } } : { body: [] }
+  })
+  const user = userEvent.setup()
+  renderPage()
+  expect(await screen.findByText('运行日志加载失败')).toBeInTheDocument()
+  expect(screen.getByText('日志服务暂时不可用')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '重新加载' }))
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+  expect(screen.queryByText('运行日志加载失败')).not.toBeInTheDocument()
 })

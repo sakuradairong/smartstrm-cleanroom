@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { App as AntApp } from 'antd'
 import TasksPage from './TasksPage'
 import type { TaskConfig, TaskStatus, TasksResponse } from '../api/types'
@@ -52,12 +52,18 @@ function stubFetch(handler: FetchHandler) {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={['/tasks']}>
       <AntApp>
         <TasksPage />
+        <LocationProbe />
       </AntApp>
     </MemoryRouter>,
   )
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}{location.search}</output>
 }
 
 afterEach(() => {
@@ -85,14 +91,70 @@ test('渲染任务行与状态徽标', async () => {
   expect(screen.getByText('local')).toBeInTheDocument()
   expect(screen.getByText('/movies')).toBeInTheDocument()
   expect(screen.getByText('空闲')).toBeInTheDocument()
-  expect(screen.getByText('生成 1 / 复制 2 / 删除 3 / 失败 0')).toBeInTheDocument()
+  expect(screen.getByText('生成 1 / 复制 2 / 跳过 0 / 删除 3 / 失败 0')).toBeInTheDocument()
   expect(screen.getByText('剧集')).toBeInTheDocument()
   expect(screen.getByText('运行中')).toBeInTheDocument()
   expect(screen.getByText('队列 2')).toBeInTheDocument()
-  expect(screen.getByText(/任务可在“配置”页添加或调整/)).toBeInTheDocument()
+  expect(screen.getByText(/添加或调整任务后会立即动态生效/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /添加任务/ })).toBeInTheDocument()
   expect(screen.getAllByText('0 */6 * * *')).toHaveLength(2)
   expect(screen.getAllByRole('button', { name: /运\s*行/ })[0]).toHaveClass('ant-btn-primary')
   expect(screen.getAllByRole('button', { name: /工\s*具/ })[0]).toHaveClass('ant-btn-text')
+  expect(screen.getByText('显示 2 / 2 个任务')).toBeInTheDocument()
+})
+
+test('添加任务入口跳转到配置页并请求打开新增表单', async () => {
+  stubFetch((url) => {
+    if (url === '/api/tasks') return { body: { tasks: [], statuses: [] } }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  const user = userEvent.setup()
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: /添加任务/ }))
+  expect(screen.getByTestId('location')).toHaveTextContent('/config?section=tasks&action=add-task')
+})
+
+test('可按名称、ID、存储或源路径筛选任务并清空筛选', async () => {
+  const data: TasksResponse = {
+    tasks: [
+      makeTask(),
+      makeTask({ id: 'anime', name: '动画', storage_id: 'webdav', source: '/shows/anime' }),
+    ],
+    statuses: [makeStatus(), makeStatus({ task_id: 'anime' })],
+  }
+  stubFetch((url) => {
+    if (url === '/api/tasks') return { body: data }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  const user = userEvent.setup()
+  renderPage()
+  const filter = await screen.findByRole('searchbox', { name: '筛选任务' })
+  await user.type(filter, 'WEBDAV')
+  expect(screen.getByText('动画')).toBeInTheDocument()
+  expect(screen.queryByText('电影')).not.toBeInTheDocument()
+  expect(screen.getByText('显示 1 / 2 个任务')).toBeInTheDocument()
+  await user.clear(filter)
+  expect(screen.getByText('电影')).toBeInTheDocument()
+  expect(screen.getByText('显示 2 / 2 个任务')).toBeInTheDocument()
+})
+
+test('手动刷新任务列表并更新计数', async () => {
+  let loads = 0
+  stubFetch((url) => {
+    if (url !== '/api/tasks') throw new Error('unexpected fetch: ' + url)
+    loads += 1
+    return {
+      body: loads === 1
+        ? { tasks: [makeTask()], statuses: [makeStatus()] }
+        : { tasks: [makeTask(), makeTask({ id: 't2', name: '剧集' })], statuses: [makeStatus()] },
+    }
+  })
+  const user = userEvent.setup()
+  renderPage()
+  expect(await screen.findByText('显示 1 / 1 个任务')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /刷\s*新/ }))
+  expect(await screen.findByText('显示 2 / 2 个任务')).toBeInTheDocument()
+  expect(screen.getByText('剧集')).toBeInTheDocument()
 })
 
 test('点击运行调用 run 接口并显示成功消息', async () => {

@@ -141,6 +141,17 @@ test('空目录显示中文空态', async () => {
   expect(screen.queryByText('No data')).not.toBeInTheDocument()
 })
 
+test('没有存储时引导用户前往添加存储', async () => {
+  stubFetch((url) => {
+    if (url === '/api/storages') return { body: [] }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  renderPage()
+  expect(await screen.findByText(/尚未添加存储/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '前往添加存储' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '新建目录' })).not.toBeInTheDocument()
+})
+
 test('TMDB 未配置时直接显示禁用原因', async () => {
   stubBase((url) => {
     if (url === '/api/bootstrap') return { body: { tmdb_configured: false } }

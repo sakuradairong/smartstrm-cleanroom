@@ -4,9 +4,11 @@ import type { HistoryEvent } from '../api/types'
 
 const MAX_EVENTS = 200
 
-export function useHistoryStream(taskID: string): { events: HistoryEvent[]; connected: boolean } {
+export function useHistoryStream(taskID: string, retryKey = 0): { events: HistoryEvent[]; connected: boolean; loading: boolean; error: string } {
   const eventsRef = useRef<HistoryEvent[]>([])
   const connectedRef = useRef(false)
+  const loadingRef = useRef(true)
+  const errorRef = useRef('')
   const [, bump] = useReducer((x: number) => x + 1, 0)
 
   useEffect(() => {
@@ -44,20 +46,29 @@ export function useHistoryStream(taskID: string): { events: HistoryEvent[]; conn
     }
 
     const load = async () => {
+      loadingRef.current = true
+      errorRef.current = ''
+      bump()
       const query = new URLSearchParams({ limit: '200' })
       if (taskID) query.set('task_id', taskID)
       try {
         const initial = await getJSON<HistoryEvent[]>(`/api/history?${query}`)
         if (cancelled) return
         eventsRef.current = (initial ?? []).slice(0, MAX_EVENTS)
+        loadingRef.current = false
         bump()
         const streamQuery = taskID ? `?task_id=${encodeURIComponent(taskID)}` : ''
         source = new EventSource(`/api/history/stream${streamQuery}`)
         source.addEventListener('history', e => queue(JSON.parse((e as MessageEvent).data)))
         source.onopen = () => { connectedRef.current = true; bump() }
         source.onerror = () => { connectedRef.current = false; bump() }
-      } catch {
-        if (!cancelled) { connectedRef.current = false; bump() }
+      } catch (error) {
+        if (!cancelled) {
+          loadingRef.current = false
+          connectedRef.current = false
+          errorRef.current = error instanceof Error ? error.message : '运行日志加载失败'
+          bump()
+        }
       }
     }
     void load()
@@ -69,7 +80,7 @@ export function useHistoryStream(taskID: string): { events: HistoryEvent[]; conn
       eventsRef.current = []
       connectedRef.current = false
     }
-  }, [taskID])
+  }, [retryKey, taskID])
 
-  return { events: eventsRef.current, connected: connectedRef.current }
+  return { events: eventsRef.current, connected: connectedRef.current, loading: loadingRef.current, error: errorRef.current }
 }

@@ -35,13 +35,14 @@ func TestPan123OpenOfficialAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/access_token" {
 			tokenCalls.Add(1)
+			assert.Equal(t, "open_platform", r.Header.Get("Platform"))
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			assert.Equal(t, "client-id", body["clientID"])
 			assert.Equal(t, "client-secret", body["clientSecret"])
 			writePan123Response(t, w, map[string]any{
 				"accessToken": "official-token",
-				"expiredAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiredAt":   time.Now().Add(time.Hour).Format(time.RFC3339),
 			})
 			return
 		}

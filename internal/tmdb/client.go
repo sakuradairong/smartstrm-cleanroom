@@ -15,6 +15,10 @@ import (
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
 )
 
+// maximumCacheEntries bounds the response cache. Search queries are caller
+// supplied, so an unbounded map would grow with every distinct query.
+const maximumCacheEntries = 512
+
 type Client struct {
 	apiKey, language, baseURL, imageBaseURL string
 	httpClient                              *http.Client
@@ -266,10 +270,25 @@ func (c *Client) get(ctx context.Context, endpoint string, values url.Values, ta
 	if err := json.Unmarshal(data, target); err != nil {
 		return err
 	}
-	c.cacheMu.Lock()
-	c.cache[requestURL] = cacheEntry{data: append([]byte(nil), data...), expires: time.Now().Add(c.cacheTTL)}
-	c.cacheMu.Unlock()
+	c.store(requestURL, data)
 	return nil
+}
+
+func (c *Client) store(key string, data []byte) {
+	now := time.Now()
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	if _, exists := c.cache[key]; !exists && len(c.cache) >= maximumCacheEntries {
+		for cached, item := range c.cache {
+			if now.After(item.expires) {
+				delete(c.cache, cached)
+			}
+		}
+		if len(c.cache) >= maximumCacheEntries {
+			return
+		}
+	}
+	c.cache[key] = cacheEntry{data: append([]byte(nil), data...), expires: now.Add(c.cacheTTL)}
 }
 
 func (c *Client) cached(key string) ([]byte, bool) {

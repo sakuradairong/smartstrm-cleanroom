@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,4 +140,41 @@ func TestTMDBImageValidationAndLimits(t *testing.T) {
 	}
 	_, err = New(config.TMDBConfig{APIKey: "test", ImageBaseURL: "file:///tmp"})
 	require.ErrorContains(t, err, "image base URL")
+}
+
+func TestClientCacheIsBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(config.TMDBConfig{APIKey: "key", BaseURL: server.URL})
+	require.NoError(t, err)
+	for index := 0; index < maximumCacheEntries*2; index++ {
+		_, err := client.Search(context.Background(), "query-"+strconv.Itoa(index), "movie", 0)
+		require.NoError(t, err)
+	}
+	client.cacheMu.RLock()
+	size := len(client.cache)
+	client.cacheMu.RUnlock()
+	assert.LessOrEqual(t, size, maximumCacheEntries)
+}
+
+func TestClientCacheEvictsExpiredEntriesBeforeRefusing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(config.TMDBConfig{APIKey: "key", BaseURL: server.URL})
+	require.NoError(t, err)
+	client.cacheMu.Lock()
+	for index := 0; index < maximumCacheEntries; index++ {
+		client.cache["stale-"+strconv.Itoa(index)] = cacheEntry{data: []byte("{}"), expires: time.Now().Add(-time.Hour)}
+	}
+	client.cacheMu.Unlock()
+	_, err = client.Search(context.Background(), "fresh", "movie", 0)
+	require.NoError(t, err)
+	client.cacheMu.RLock()
+	size := len(client.cache)
+	client.cacheMu.RUnlock()
+	assert.Equal(t, 1, size, "expired entries should be reclaimed so new responses still cache")
 }

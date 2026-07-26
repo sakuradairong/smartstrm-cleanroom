@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/signature"
@@ -186,8 +185,4 @@ func isSignedSmartStrmURL(value string, streamBase *url.URL, signingSecret strin
 		locator = "id:" + fileID
 	}
 	return signature.Valid(signingSecret, storageID, locator, query.Get("sig"))
-}
-
-func Server(cfg config.MediaProxyConfig, handler http.Handler) *http.Server {
-	return &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/history"
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/mediaproxy"
 	renamer "github.com/sakuradairong/smartstrm-cleanroom/internal/rename"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/signature"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/storage"
@@ -48,6 +49,7 @@ type App struct {
 	rootCtx     context.Context
 	bootConfig  config.Config
 	handler     http.Handler
+	proxy       *mediaproxy.Supervisor
 }
 
 type runtimeState struct {
@@ -58,8 +60,11 @@ type runtimeState struct {
 	history  *history.Store
 }
 
+// processOwnedConfig captures the settings that belong to the process itself
+// rather than to the reloadable runtime. The media proxy is deliberately absent:
+// it is reconciled live by its supervisor on every reload.
 func processOwnedConfig(cfg config.Config) config.Config {
-	return config.Config{Listen: cfg.Listen, Admin: cfg.Admin, MediaProxy: cfg.MediaProxy}
+	return config.Config{Listen: cfg.Listen, Admin: cfg.Admin}
 }
 
 func historySettings(cfg config.Config) (string, int) {
@@ -113,6 +118,7 @@ func New(cfg config.Config) (*App, error) {
 		configPath: cfg.Path,
 		config:     state.config, storages: state.storages, manager: state.manager,
 		tmdb: state.tmdb, history: state.history, bootConfig: processOwnedConfig(cfg), spaHandler: embeddedSPA().handler(),
+		proxy: mediaproxy.NewSupervisor(),
 	}
 	application.handler = application.routes()
 	return application, nil
@@ -129,8 +135,16 @@ func (a *App) Start(ctx context.Context) error {
 		stop()
 		return err
 	}
+	if _, err := a.proxy.Apply(a.config.MediaProxy, a.config.PublicURL, a.config.WebhookToken); err != nil {
+		stop()
+		return fmt.Errorf("start media proxy: %w", err)
+	}
 	a.runtimeCtx, a.runtimeStop = runtimeCtx, stop
 	a.rootCtx = ctx
+	go func() {
+		<-ctx.Done()
+		a.proxy.Stop()
+	}()
 	if a.configPath != "" {
 		// Read the baseline before the watcher goroutine is scheduled. Sampling it
 		// inside the goroutine would race with an edit made right after startup:
@@ -186,14 +200,18 @@ func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
 	}
 	if a.runtimeCtx == nil {
 		candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
-		if restartNeeded {
-			candidate.MediaProxy = a.config.MediaProxy
-		}
 		state.config = candidate
 		a.config, a.storages, a.manager = state.config, state.storages, state.manager
 		a.tmdb, a.history = state.tmdb, state.history
 		return restartNeeded, nil
 	}
+	// Reconcile the proxy before publishing the new runtime so a rejected proxy
+	// configuration leaves the whole reload untouched.
+	proxyRestart, err := a.proxy.Apply(candidate.MediaProxy, candidate.PublicURL, candidate.WebhookToken)
+	if err != nil {
+		return false, fmt.Errorf("apply media proxy configuration: %w", err)
+	}
+	restartNeeded = restartNeeded || proxyRestart
 	nextCtx, nextStop := context.WithCancel(a.rootCtx)
 	if err := state.manager.Start(nextCtx); err != nil {
 		nextStop()
@@ -202,9 +220,6 @@ func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
 	previousStop := a.runtimeStop
 	previousManager := a.manager
 	candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
-	if restartNeeded {
-		candidate.MediaProxy = a.config.MediaProxy
-	}
 	state.config = candidate
 	a.config, a.storages, a.manager = state.config, state.storages, state.manager
 	a.tmdb, a.history, a.runtimeStop = state.tmdb, state.history, nextStop
@@ -309,7 +324,7 @@ func restartRequired(current, candidate config.Config) bool {
 	if candidateListen == "" {
 		candidateListen = ":8024"
 	}
-	return currentListen != candidateListen || current.Admin != candidate.Admin || current.MediaProxy != candidate.MediaProxy
+	return currentListen != candidateListen || current.Admin != candidate.Admin
 }
 
 func (a *App) routes() http.Handler {

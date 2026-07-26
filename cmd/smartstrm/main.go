@@ -15,7 +15,6 @@ import (
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/app"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
-	"github.com/sakuradairong/smartstrm-cleanroom/internal/mediaproxy"
 )
 
 func main() {
@@ -47,16 +46,9 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	// The media proxy listener belongs to the application so it can be started,
+	// stopped and reconfigured without restarting this process.
 	servers := []*http.Server{server}
-	if cfg.MediaProxy.Enabled {
-		proxyHandler, err := mediaproxy.New(cfg.MediaProxy, cfg.PublicURL, cfg.WebhookToken)
-		if err != nil {
-			slog.Error("initialize media proxy", "error", err)
-			os.Exit(1)
-		}
-		proxyServer := mediaproxy.Server(cfg.MediaProxy, proxyHandler)
-		servers = append(servers, proxyServer)
-	}
 	listeners := make([]net.Listener, 0, len(servers))
 	for _, runningServer := range servers {
 		listener, err := net.Listen("tcp", runningServer.Addr)

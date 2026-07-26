@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1002,16 +1004,19 @@ func TestFullConfigReportsRestartOnlyForProcessOwnedSettings(t *testing.T) {
 	application.runtimeMu.RUnlock()
 }
 
-func TestRestartRequiredTreatsMediaProxyAsProcessOwned(t *testing.T) {
-	boot := config.Config{Listen: ":8024", Admin: config.AdminConfig{Username: "admin", Password: "password"}, MediaProxy: config.MediaProxyConfig{Enabled: true, Listen: ":8097", Upstream: "http://old.example"}}
+func TestRestartRequiredCoversOnlyProcessOwnedSettings(t *testing.T) {
+	boot := config.Config{Listen: ":8024", Admin: config.AdminConfig{Username: "admin", Password: "password"}}
 	candidate := boot
-	candidate.MediaProxy.Upstream = "http://new.example"
-	assert.True(t, restartRequired(boot, candidate))
-	candidate.MediaProxy.Listen = ":8098"
+	candidate.Listen = ":9000"
 	assert.True(t, restartRequired(boot, candidate))
 	candidate = boot
-	candidate.MediaProxy.Enabled = false
+	candidate.Admin.Password = "rotated"
 	assert.True(t, restartRequired(boot, candidate))
+
+	// The media proxy is reconciled live, so it is not a process-owned setting.
+	candidate = boot
+	candidate.MediaProxy = config.MediaProxyConfig{Enabled: true, Listen: ":8097", Upstream: "http://emby.example"}
+	assert.False(t, restartRequired(boot, candidate))
 }
 
 func TestBootConfigDoesNotRetainRuntimeSecrets(t *testing.T) {
@@ -1404,6 +1409,19 @@ func TestConcurrentRequestsDuringReloadAreRaceFree(t *testing.T) {
 	group.Wait()
 }
 
+func quoteJSON(value string) string {
+	var buffer bytes.Buffer
+	buffer.WriteByte('"')
+	for _, character := range value {
+		if character == '\\' || character == '"' {
+			buffer.WriteByte('\\')
+		}
+		buffer.WriteRune(character)
+	}
+	buffer.WriteByte('"')
+	return buffer.String()
+}
+
 // TestConfigWatcherDetectsEditMadeImmediatelyAfterStart pins the watcher's
 // baseline handoff. Sampling the baseline inside the watcher goroutine loses
 // any edit that lands before the goroutine is scheduled, which silently drops a
@@ -1525,15 +1543,111 @@ func TestCreateLocalDirectoryRejectsTraversalNames(t *testing.T) {
 	assert.True(t, info.IsDir())
 }
 
-func quoteJSON(value string) string {
-	var buffer bytes.Buffer
-	buffer.WriteByte('"')
-	for _, character := range value {
-		if character == '\\' || character == '"' {
-			buffer.WriteByte('\\')
-		}
-		buffer.WriteRune(character)
+// TestMediaProxyReconfiguresWithoutRestart drives the proxy through the real
+// configuration API: enabling it, retargeting it and disabling it must all take
+// effect while the process keeps running.
+func TestMediaProxyReconfiguresWithoutRestart(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "first-upstream")
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "second-upstream")
+	}))
+	defer second.Close()
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyAddress := probe.Addr().String()
+	require.NoError(t, probe.Close())
+
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.json")
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, Listen: ":8024",
+		PublicURL: "http://localhost:8024", WebhookToken: "token",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: t.TempDir()}},
 	}
-	buffer.WriteByte('"')
-	return buffer.String()
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	save := func(t *testing.T, managed config.ManagedConfig) string {
+		t.Helper()
+		payload, marshalErr := json.Marshal(managed)
+		require.NoError(t, marshalErr)
+		request := httptest.NewRequest(http.MethodPut, "/api/config/managed", bytes.NewReader(payload))
+		response := httptest.NewRecorder()
+		application.Handler().ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		return response.Body.String()
+	}
+	fetch := func(t *testing.T) string {
+		t.Helper()
+		response, getErr := http.Get("http://" + proxyAddress + "/probe")
+		require.NoError(t, getErr)
+		defer response.Body.Close()
+		body, readErr := io.ReadAll(response.Body)
+		require.NoError(t, readErr)
+		return string(body)
+	}
+
+	// Enable the proxy on a live server.
+	managed := disk.Managed()
+	managed.MediaProxy = config.MediaProxyConfig{Enabled: true, Listen: proxyAddress, Upstream: first.URL}
+	body := save(t, managed)
+	assert.Contains(t, body, `"restart_required":false`, "enabling the proxy must not require a restart")
+	assert.Equal(t, "first-upstream", fetch(t))
+
+	// Retarget it without a restart.
+	managed.MediaProxy.Upstream = second.URL
+	body = save(t, managed)
+	assert.Contains(t, body, `"restart_required":false`, "retargeting the proxy must not require a restart")
+	assert.Equal(t, "second-upstream", fetch(t))
+
+	// Disable it and confirm the port is released.
+	managed.MediaProxy = config.MediaProxyConfig{}
+	body = save(t, managed)
+	assert.Contains(t, body, `"restart_required":false`, "disabling the proxy must not require a restart")
+	released, listenErr := net.Listen("tcp", proxyAddress)
+	require.NoError(t, listenErr, "the proxy port must be released once disabled")
+	require.NoError(t, released.Close())
+}
+
+// TestMediaProxyListenChangeStillRequiresRestart records the one case that
+// cannot be applied live: the published container port is fixed at startup.
+func TestMediaProxyListenChangeStillRequiresRestart(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer upstream.Close()
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyAddress := probe.Addr().String()
+	require.NoError(t, probe.Close())
+
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.json")
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, Listen: ":8024",
+		PublicURL: "http://localhost:8024", WebhookToken: "token",
+		MediaProxy: config.MediaProxyConfig{Enabled: true, Listen: proxyAddress, Upstream: upstream.URL},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	managed := disk.Managed()
+	managed.MediaProxy.Listen = "127.0.0.1:0"
+	payload, err := json.Marshal(managed)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/config/managed", bytes.NewReader(payload))
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"restart_required":true`, "a new proxy port needs a restart")
 }

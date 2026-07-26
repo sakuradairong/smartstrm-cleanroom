@@ -1,18 +1,43 @@
+.dashboard-page .ant-typography-h2 {
+	margin-bottom: 2px;
+}
+
+/* The dashboard heading is a Space child, so Space already supplies the gap. */
+.dashboard-heading {
+	margin-bottom: 0;
+}
+
 .dashboard-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 16px;
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 16px;
+}
+
+.dashboard-stat {
+	min-height: 116px;
+	border-radius: 12px !important;
+}
+
+.dashboard-stat .ant-card-body {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	padding: 22px 24px;
+}
+
+.dashboard-stat .ant-statistic-title {
+	margin-bottom: 8px;
 }
 
 @media (max-width: 1100px) {
-  .dashboard-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+	.dashboard-stats {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
 }
 
 @media (max-width: 640px) {
-  .dashboard-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
+	.dashboard-stats {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
 }

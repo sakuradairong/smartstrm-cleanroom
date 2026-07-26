@@ -58,6 +58,8 @@ jobs:
         run: python3 -m json.tool config.example.json >/dev/null
       - name: Check Markdown links
         run: python3 scripts/check_markdown_links.py
+      - name: Check page stylesheet scope
+        run: python3 scripts/check_page_styles.py
       - name: Validate Compose
         run: docker compose config -q
       - name: Check whitespace

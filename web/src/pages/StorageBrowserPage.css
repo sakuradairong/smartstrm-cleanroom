@@ -1,71 +1,88 @@
 .storage-toolbar {
-  display: grid;
-  grid-template-columns: minmax(28rem, 2fr) minmax(20rem, 1fr);
-  gap: 10px 16px;
-  margin-bottom: 12px;
+	display: grid;
+	grid-template-columns: minmax(28rem, 2fr) minmax(20rem, 1fr);
+	gap: 10px 16px;
+	margin-bottom: 12px;
 }
 
 .storage-toolbar-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
 }
 
 .storage-location .ant-select {
-  min-width: 160px;
+	min-width: 160px;
 }
 
 .storage-location .ant-input {
-  min-width: 220px;
-  flex: 1;
+	min-width: 220px;
+	flex: 1;
 }
 
 .storage-display .ant-input-affix-wrapper {
-  min-width: 160px;
-  flex: 1;
+	min-width: 160px;
+	flex: 1;
 }
 
 .storage-display .ant-select {
-  width: 130px;
+	width: 130px;
 }
 
 .storage-actions {
-  grid-column: 1 / -1;
+	grid-column: 1 / -1;
 }
 
 .storage-toolbar-status {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+	grid-column: 1 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 16px;
 }
 
 .storage-table {
-  max-width: 100%;
-  overflow: hidden;
+	max-width: 100%;
+	overflow: hidden;
+}
+
+.storage-time {
+	color: var(--app-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+/* Icon-only row actions stay on one line so each entry keeps a single row. */
+.storage-row-actions {
+	flex-wrap: nowrap;
+}
+
+.storage-row-actions .ant-btn {
+	width: 32px;
+	height: 32px;
+	padding: 0;
 }
 
 @media (max-width: 900px) {
-  .storage-toolbar {
-    grid-template-columns: 1fr;
-  }
+	.storage-toolbar {
+		grid-template-columns: 1fr;
+	}
 
-  .storage-actions,
-  .storage-toolbar-status {
-    grid-column: auto;
-  }
+	.storage-actions,
+	.storage-toolbar-status {
+		grid-column: auto;
+	}
 }
 
 @media (max-width: 480px) {
-  .storage-location .ant-select,
-  .storage-location .ant-input,
-  .storage-display .ant-input-affix-wrapper {
-    width: 100%;
-    min-width: 0;
-  }
+	.storage-location .ant-select,
+	.storage-location .ant-input,
+	.storage-display .ant-input-affix-wrapper {
+		width: 100%;
+		min-width: 0;
+	}
 
-  .storage-display .ant-select {
-    flex: 1;
-    min-width: 130px;
-  }
+	.storage-display .ant-select {
+		flex: 1;
+		min-width: 130px;
+	}
 }

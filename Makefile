@@ -15,6 +15,7 @@ test:
 check: vet test
 	python3 -m json.tool config.example.json >/dev/null
 	python3 scripts/check_markdown_links.py
+	python3 scripts/check_page_styles.py
 	docker compose config -q
 	git diff --check
 

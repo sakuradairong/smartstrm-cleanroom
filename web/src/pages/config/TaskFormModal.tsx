@@ -432,6 +432,7 @@ export default function TaskFormModal({
 				/>
 			</Form>
 			<DirectoryPicker
+				key={picker ?? "closed"}
 				open={picker !== null}
 				mode={picker === "destination" ? "local" : "storage"}
 				title={picker === "destination" ? "选择 STRM 输出目录" : "选择源目录"}

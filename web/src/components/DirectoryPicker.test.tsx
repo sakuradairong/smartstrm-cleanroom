@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App as AntApp } from "antd";
 import DirectoryPicker from "./DirectoryPicker";
@@ -116,6 +116,84 @@ test("本地模式读取 local-dirs 并可返回上一级", async () => {
 	);
 	// 根目录没有父级，按钮应禁用
 	expect(screen.getByRole("button", { name: "上一级" })).toBeDisabled();
+});
+
+test("切换到输出目录后忽略迟到的云端目录响应", async () => {
+	let resolveStorage: (value: Response) => void = () => {};
+	const storageResponse = new Promise<Response>((resolve) => {
+		resolveStorage = resolve;
+	});
+	vi.stubGlobal(
+		"fetch",
+		vi.fn((input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url === "/api/storages/media/entries?path=%2F") {
+				return storageResponse;
+			}
+			if (url === "/api/local-dirs?path=%2Fstrm") {
+				return Promise.resolve(
+					response({
+						path: "/strm",
+						parent: "/",
+						directories: [{ name: "本地输出", path: "/strm/本地输出" }],
+					}),
+				);
+			}
+			return Promise.reject(new Error(`unexpected ${url}`));
+		}),
+	);
+	const common = {
+		title: "选择目录",
+		onCancel: () => {},
+		onSelect: () => {},
+	};
+	const view = render(
+		<AntApp>
+			<DirectoryPicker
+				{...common}
+				open
+				mode="storage"
+				storageID="media"
+				value="/"
+			/>
+		</AntApp>,
+	);
+	await waitFor(() =>
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+			"/api/storages/media/entries?path=%2F",
+		),
+	);
+
+	view.rerender(
+		<AntApp>
+			<DirectoryPicker
+				{...common}
+				open
+				mode="local"
+				value="/strm"
+			/>
+		</AntApp>,
+	);
+	expect(await screen.findByText("本地输出")).toBeInTheDocument();
+
+	await act(async () => {
+		resolveStorage(
+			response([
+				{
+					path: "/云端电影",
+					name: "云端电影",
+					size: 0,
+					is_dir: true,
+					modified: "",
+				},
+			]),
+		);
+		await storageResponse;
+	});
+
+	expect(screen.getByText("本地输出")).toBeInTheDocument();
+	expect(screen.queryByText("云端电影")).not.toBeInTheDocument();
+	expect(screen.getByLabelText("当前目录")).toHaveValue("/strm");
 });
 
 test("新建目录调用接口并刷新列表", async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	App,
 	Breadcrumb,
@@ -75,9 +75,11 @@ export default function DirectoryPicker({
 	const [error, setError] = useState("");
 	const [creating, setCreating] = useState(false);
 	const [newName, setNewName] = useState("");
+	const browseRequest = useRef(0);
 
 	const browse = useCallback(
 		async (path: string) => {
+			const request = ++browseRequest.current;
 			setLoading(true);
 			setError("");
 			try {
@@ -85,6 +87,7 @@ export default function DirectoryPicker({
 					const listing = await getJSON<LocalDirectoryListing>(
 						`/api/local-dirs?path=${encodeURIComponent(path)}`,
 					);
+					if (request !== browseRequest.current) return;
 					setLevel({
 						path: listing.path,
 						parent: listing.parent,
@@ -94,6 +97,7 @@ export default function DirectoryPicker({
 					const entries = await getJSON<StorageEntry[]>(
 						`/api/storages/${encodeURIComponent(storageID ?? "")}/entries?path=${encodeURIComponent(path)}`,
 					);
+					if (request !== browseRequest.current) return;
 					setLevel({
 						path,
 						parent: path === "/" ? "" : storageParent(path),
@@ -106,21 +110,31 @@ export default function DirectoryPicker({
 					});
 				}
 			} catch (browseError) {
+				if (request !== browseRequest.current) return;
 				setError(
 					browseError instanceof Error ? browseError.message : "目录读取失败",
 				);
 			} finally {
-				setLoading(false);
+				if (request === browseRequest.current) setLoading(false);
 			}
 		},
 		[mode, storageID],
 	);
 
 	useEffect(() => {
-		if (!open) return;
+		if (!open) {
+			browseRequest.current += 1;
+			setLevel(null);
+			setLoading(false);
+			return;
+		}
+		setLevel(null);
 		setCreating(false);
 		setNewName("");
 		void browse(value?.trim() || "/");
+		return () => {
+			browseRequest.current += 1;
+		};
 	}, [browse, open, value]);
 
 	const createDirectory = async () => {

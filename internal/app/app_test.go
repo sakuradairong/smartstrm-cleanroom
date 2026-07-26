@@ -789,7 +789,7 @@ func TestConfigPersistenceAPIRedactsPreservesResetsAndRestores(t *testing.T) {
 	require.NoError(t, err)
 	response = call(http.MethodPut, "/api/config", string(payload))
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), `"restart_required":true`)
+	assert.Contains(t, response.Body.String(), `"restart_required":false`)
 	updated, err := config.LoadDisk(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, "original-secret", updated.WebhookToken)
@@ -859,7 +859,7 @@ func TestManagedConfigAPIUpdatesBusinessSettingsOnly(t *testing.T) {
 	response = call(http.MethodPut, "/api/config/managed", string(payload))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
-	assert.Contains(t, response.Body.String(), `"restart_required":true`)
+	assert.Contains(t, response.Body.String(), `"restart_required":false`)
 
 	updated, err := config.LoadDisk(configPath)
 	require.NoError(t, err)
@@ -877,6 +877,226 @@ func TestManagedConfigAPIUpdatesBusinessSettingsOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ":8024", unchanged.Listen)
 	assert.Len(t, unchanged.Storages, 2)
+}
+
+func TestManagedConfigHotReloadsRuntimeWithoutRestart(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	firstRoot := t.TempDir()
+	secondRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(firstRoot, "before.mkv"), []byte("before"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(secondRoot, "after.mkv"), []byte("after"), 0o644))
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost:8024", WebhookToken: "hot-secret",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: firstRoot}},
+		Tasks:    []config.TaskConfig{{ID: "before", StorageID: "media", Source: "/", Destination: filepath.Join(t.TempDir(), "strm")}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	call := func(method, target, payload string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, target, bytes.NewBufferString(payload))
+		if payload != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		application.Handler().ServeHTTP(response, request)
+		return response
+	}
+
+	before := call(http.MethodGet, "/api/storages/media/entries?path=/", "")
+	require.Equal(t, http.StatusOK, before.Code, before.Body.String())
+	assert.Contains(t, before.Body.String(), "before.mkv")
+
+	managed := disk.Managed()
+	managed.Storages = []config.StorageConfig{{ID: "media", Type: "local", Root: secondRoot}}
+	managed.Tasks = []config.TaskConfig{{ID: "after", StorageID: "media", Source: "/", Destination: filepath.Join(t.TempDir(), "strm")}}
+	payload, err := json.Marshal(managed)
+	require.NoError(t, err)
+	updated := call(http.MethodPut, "/api/config/managed", string(payload))
+	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+	assert.Contains(t, updated.Body.String(), `"restart_required":false`)
+
+	after := call(http.MethodGet, "/api/storages/media/entries?path=/", "")
+	require.Equal(t, http.StatusOK, after.Code, after.Body.String())
+	assert.Contains(t, after.Body.String(), "after.mkv")
+	assert.NotContains(t, after.Body.String(), "before.mkv")
+	tasks := call(http.MethodGet, "/api/tasks", "")
+	require.Equal(t, http.StatusOK, tasks.Code, tasks.Body.String())
+	assert.Contains(t, tasks.Body.String(), `"id":"after"`)
+	assert.NotContains(t, tasks.Body.String(), `"id":"before"`)
+}
+
+func TestManagedConfigHotReloadKeepsHistorySubscriptions(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost:8024", WebhookToken: "hot-secret",
+		History: config.HistoryConfig{Path: filepath.Join(t.TempDir(), "history.jsonl"), MaxEntries: 100},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+	subscription := application.history.Subscribe(ctx)
+
+	managed := disk.Managed()
+	managed.TMDB.Language = "en-US"
+	payload, err := json.Marshal(managed)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/config/managed", bytes.NewReader(payload))
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, application.history.Record(history.Event{TaskID: "after", Type: "completed"}))
+	select {
+	case event := <-subscription:
+		assert.Equal(t, "after", event.TaskID)
+	case <-time.After(time.Second):
+		t.Fatal("history subscription did not survive hot reload")
+	}
+}
+
+func TestFullConfigReportsRestartOnlyForProcessOwnedSettings(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, Listen: ":8024", PublicURL: "http://localhost:8024", WebhookToken: "hot-secret",
+		Admin: config.AdminConfig{Username: "admin", Password: "password"},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	candidate := disk
+	candidate.Listen = ":9000"
+	payload, err := json.Marshal(candidate)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(payload))
+	request.SetBasicAuth("admin", "password")
+	response := httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"restart_required":true`)
+
+	candidate.PublicURL = "http://changed.example"
+	payload, err = json.Marshal(candidate)
+	require.NoError(t, err)
+	request = httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(payload))
+	request.SetBasicAuth("admin", "password")
+	response = httptest.NewRecorder()
+	application.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"restart_required":true`, "pending boot-only changes must keep requiring restart")
+	application.runtimeMu.RLock()
+	assert.Equal(t, ":8024", application.config.Listen, "active listener config remains at its boot value until restart")
+	assert.Equal(t, "admin", application.config.Admin.Username, "active authentication remains at its boot value until restart")
+	application.runtimeMu.RUnlock()
+}
+
+func TestRestartRequiredTreatsMediaProxyAsProcessOwned(t *testing.T) {
+	boot := config.Config{Listen: ":8024", Admin: config.AdminConfig{Username: "admin", Password: "password"}, MediaProxy: config.MediaProxyConfig{Enabled: true, Listen: ":8097", Upstream: "http://old.example"}}
+	candidate := boot
+	candidate.MediaProxy.Upstream = "http://new.example"
+	assert.True(t, restartRequired(boot, candidate))
+	candidate.MediaProxy.Listen = ":8098"
+	assert.True(t, restartRequired(boot, candidate))
+	candidate = boot
+	candidate.MediaProxy.Enabled = false
+	assert.True(t, restartRequired(boot, candidate))
+}
+
+func TestBootConfigDoesNotRetainRuntimeSecrets(t *testing.T) {
+	application, err := New(config.Config{
+		PublicURL: "http://localhost", WebhookToken: "runtime-webhook-secret",
+		Admin:    config.AdminConfig{Username: "admin", Password: "password"},
+		Storages: []config.StorageConfig{{ID: "cloud", Type: "123_open", ClientID: "client-id", ClientSecret: "client-secret"}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, application.bootConfig.WebhookToken)
+	assert.Empty(t, application.bootConfig.Storages)
+	assert.Equal(t, "admin", application.bootConfig.Admin.Username)
+}
+
+func TestHotReloadPreflightFailureKeepsDiskAndRuntimeUnchanged(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost", WebhookToken: "token",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: oldRoot}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	previous := disk.Clone()
+	candidate := disk.Clone()
+	candidate.Storages[0].Root = newRoot
+	candidate.History.Path = filepath.Join("/proc", "smartstrm-history.jsonl")
+	_, err = application.persistAndReload(configPath, candidate, previous)
+	require.Error(t, err)
+	_, backupErr := os.Stat(configPath + ".bak")
+	assert.ErrorIs(t, backupErr, os.ErrNotExist)
+	current, loadErr := config.LoadDisk(configPath)
+	require.NoError(t, loadErr)
+	assert.Equal(t, oldRoot, current.Storages[0].Root)
+	assert.Equal(t, oldRoot, application.config.Storages[0].Root)
+}
+
+func TestExternalConfigFileUpdateHotReloadsRuntime(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	firstRoot, secondRoot := t.TempDir(), t.TempDir()
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost", WebhookToken: "token",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: firstRoot}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+
+	candidate := disk.Clone()
+	candidate.Storages[0].Root = secondRoot
+	require.NoError(t, config.Save(configPath, candidate))
+	require.Eventually(t, func() bool {
+		application.runtimeMu.RLock()
+		defer application.runtimeMu.RUnlock()
+		local, ok := application.storages["media"].(*storage.Local)
+		return ok && local.Root() == secondRoot
+	}, 4*time.Second, 100*time.Millisecond)
+}
+
+func TestExternalInvalidConfigKeepsActiveRuntime(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	root := t.TempDir()
+	disk := config.Config{
+		Version: config.CurrentVersion, Path: configPath, PublicURL: "http://localhost", WebhookToken: "token",
+		Storages: []config.StorageConfig{{ID: "media", Type: "local", Root: root}},
+	}
+	require.NoError(t, config.Save(configPath, disk))
+	application, err := New(disk)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, application.Start(ctx))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"version":1,"public_url":"bad"}`), 0o600))
+	time.Sleep(1200 * time.Millisecond)
+	application.runtimeMu.RLock()
+	local, ok := application.storages["media"].(*storage.Local)
+	application.runtimeMu.RUnlock()
+	require.True(t, ok)
+	assert.Equal(t, root, local.Root())
 }
 
 func TestPublicWebhookOpenListRefresh(t *testing.T) {

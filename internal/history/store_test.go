@@ -57,6 +57,31 @@ func TestStoreSubscriptionIsNonBlockingAndCloses(t *testing.T) {
 	}
 }
 
+func TestStoreReconfigureKeepsSubscribersAndEventSequence(t *testing.T) {
+	store, err := New("", 10)
+	require.NoError(t, err)
+	require.NoError(t, store.Record(Event{TaskID: "task", Type: "queued"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := store.Subscribe(ctx)
+	path := filepath.Join(t.TempDir(), "reconfigured.jsonl")
+	require.NoError(t, store.Reconfigure(path, 1))
+	require.NoError(t, store.Record(Event{TaskID: "task", Type: "completed"}))
+	select {
+	case event := <-events:
+		assert.Equal(t, "completed", event.Type)
+		assert.Equal(t, uint64(1), event.ID)
+	case <-time.After(time.Second):
+		t.Fatal("subscription did not survive reconfiguration")
+	}
+	snapshot := store.Snapshot("", 10)
+	require.Len(t, snapshot, 1)
+	assert.Equal(t, "completed", snapshot[0].Type)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"type":"completed"`)
+}
+
 func TestRedact(t *testing.T) {
 	assert.NotContains(t, Redact("https://user:pass@example/a?api_key=secret&x=1"), "pass")
 	assert.NotContains(t, Redact("https://example/a?api_key=secret&x=1"), "secret")

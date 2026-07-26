@@ -104,7 +104,7 @@ func TestLoadMigratesLegacyAndCreatesBackup(t *testing.T) {
 	assert.JSONEq(t, legacy, string(backup))
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
 }
 
 func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
@@ -211,4 +211,25 @@ func TestMediaProxyValidation(t *testing.T) {
 	require.ErrorContains(t, base.Validate(), "media_proxy.server_type")
 	base.MediaProxy = MediaProxyConfig{Enabled: false, Listen: "bad address", Upstream: "file:///tmp"}
 	require.NoError(t, base.Validate(), "disabled proxy settings are inert")
+}
+
+func TestCloneDeepCopiesMutableSlices(t *testing.T) {
+	original := Config{
+		Storages: []StorageConfig{{ID: "one", Type: "local", Root: "/media"}},
+		Tasks:    []TaskConfig{{ID: "task", MediaExt: []string{"mkv"}, CopyExt: []string{"srt"}, KeepLocal: []string{"poster.jpg"}, Plugins: []PluginConfig{{Type: "plugin"}}}},
+		Plugins:  []PluginConfig{{Type: "global"}},
+	}
+	clone := original.Clone()
+	clone.Storages[0].Root = "/changed"
+	clone.Tasks[0].MediaExt[0] = "mp4"
+	clone.Tasks[0].CopyExt[0] = "ass"
+	clone.Tasks[0].KeepLocal[0] = "fanart.jpg"
+	clone.Tasks[0].Plugins[0].Type = "changed"
+	clone.Plugins[0].Type = "changed-global"
+	assert.Equal(t, "/media", original.Storages[0].Root)
+	assert.Equal(t, "mkv", original.Tasks[0].MediaExt[0])
+	assert.Equal(t, "srt", original.Tasks[0].CopyExt[0])
+	assert.Equal(t, "poster.jpg", original.Tasks[0].KeepLocal[0])
+	assert.Equal(t, "plugin", original.Tasks[0].Plugins[0].Type)
+	assert.Equal(t, "global", original.Plugins[0].Type)
 }

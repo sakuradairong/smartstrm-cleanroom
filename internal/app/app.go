@@ -3,16 +3,20 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,101 +34,314 @@ import (
 )
 
 type App struct {
-	config     config.Config
-	storages   map[string]storage.Storage
-	manager    *task.Manager
-	tmdb       *tmdb.Client
-	history    *history.Store
-	spaHandler http.Handler
-	configMu   sync.Mutex
-	handler    http.Handler
+	configPath  string
+	config      config.Config
+	storages    map[string]storage.Storage
+	manager     *task.Manager
+	tmdb        *tmdb.Client
+	history     *history.Store
+	spaHandler  http.Handler
+	runtimeMu   sync.RWMutex
+	configMu    sync.Mutex
+	runtimeCtx  context.Context
+	runtimeStop context.CancelFunc
+	rootCtx     context.Context
+	bootConfig  config.Config
+	handler     http.Handler
 }
 
-func New(cfg config.Config) (*App, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	storages, err := storage.BuildAll(cfg.Storages)
-	if err != nil {
-		return nil, err
-	}
-	for _, taskConfig := range cfg.Tasks {
-		if taskConfig.FileIDMode {
-			if _, ok := storages[taskConfig.StorageID].(storage.FileIDStorage); !ok {
-				return nil, fmt.Errorf("task %q enables file_id_mode but storage %q does not support stable file IDs", taskConfig.ID, taskConfig.StorageID)
-			}
-		}
-	}
-	manager := task.NewManager(cfg.Tasks, storages, task.NewGenerator(cfg.PublicURL, cfg.WebhookToken, cfg.Plugins...))
+type runtimeState struct {
+	config   config.Config
+	storages map[string]storage.Storage
+	manager  *task.Manager
+	tmdb     *tmdb.Client
+	history  *history.Store
+}
+
+func processOwnedConfig(cfg config.Config) config.Config {
+	return config.Config{Listen: cfg.Listen, Admin: cfg.Admin, MediaProxy: cfg.MediaProxy}
+}
+
+func historySettings(cfg config.Config) (string, int) {
 	historyPath := cfg.History.Path
 	if historyPath == "" && cfg.Path != "" {
 		historyPath = filepath.Join(filepath.Dir(cfg.Path), "history.jsonl")
 	}
-	historyStore, err := history.New(historyPath, cfg.History.MaxEntries)
+	return historyPath, cfg.History.MaxEntries
+}
+
+func buildRuntime(cfg config.Config, historyStore *history.Store) (runtimeState, error) {
+	if err := cfg.Validate(); err != nil {
+		return runtimeState{}, err
+	}
+	storages, err := storage.BuildAll(cfg.Storages)
 	if err != nil {
-		return nil, fmt.Errorf("initialize history: %w", err)
+		return runtimeState{}, err
+	}
+	for _, taskConfig := range cfg.Tasks {
+		if taskConfig.FileIDMode {
+			if _, ok := storages[taskConfig.StorageID].(storage.FileIDStorage); !ok {
+				return runtimeState{}, fmt.Errorf("task %q enables file_id_mode but storage %q does not support stable file IDs", taskConfig.ID, taskConfig.StorageID)
+			}
+		}
+	}
+	if err := task.ValidateRuntime(cfg.Tasks, storages); err != nil {
+		return runtimeState{}, err
+	}
+	manager := task.NewManager(cfg.Tasks, storages, task.NewGenerator(cfg.PublicURL, cfg.WebhookToken, cfg.Plugins...))
+	if historyStore == nil {
+		historyPath, historyMax := historySettings(cfg)
+		historyStore, err = history.New(historyPath, historyMax)
+		if err != nil {
+			return runtimeState{}, fmt.Errorf("initialize history: %w", err)
+		}
 	}
 	manager.SetHistory(historyStore)
 	tmdbClient, err := tmdb.New(cfg.TMDB)
 	if err != nil {
+		return runtimeState{}, err
+	}
+	return runtimeState{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore}, nil
+}
+
+func New(cfg config.Config) (*App, error) {
+	state, err := buildRuntime(cfg, nil)
+	if err != nil {
 		return nil, err
 	}
-	application := &App{config: cfg, storages: storages, manager: manager, tmdb: tmdbClient, history: historyStore, spaHandler: embeddedSPA().handler()}
+	application := &App{
+		configPath: cfg.Path,
+		config:     state.config, storages: state.storages, manager: state.manager,
+		tmdb: state.tmdb, history: state.history, bootConfig: processOwnedConfig(cfg), spaHandler: embeddedSPA().handler(),
+	}
 	application.handler = application.routes()
 	return application, nil
 }
 
-func (a *App) Start(ctx context.Context) error { return a.manager.Start(ctx) }
-func (a *App) Handler() http.Handler           { return a.handler }
+func (a *App) Start(ctx context.Context) error {
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	if a.runtimeCtx != nil {
+		return fmt.Errorf("application is already started")
+	}
+	runtimeCtx, stop := context.WithCancel(ctx)
+	if err := a.manager.Start(runtimeCtx); err != nil {
+		stop()
+		return err
+	}
+	a.runtimeCtx, a.runtimeStop = runtimeCtx, stop
+	a.rootCtx = ctx
+	if a.configPath != "" {
+		go a.watchConfigFile(ctx, a.configPath)
+	}
+	return nil
+}
+func (a *App) Handler() http.Handler { return a.handler }
+
+func (a *App) withRuntime(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.runtimeMu.RLock()
+		defer a.runtimeMu.RUnlock()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
+	restartNeeded := restartRequired(a.bootConfig, candidate)
+	a.runtimeMu.RLock()
+	historyStore := a.history
+	a.runtimeMu.RUnlock()
+	state, err := buildRuntime(candidate, historyStore)
+	if err != nil {
+		return false, err
+	}
+	historyPath, historyMax := historySettings(candidate)
+	if err := historyStore.ValidateReconfigure(historyPath); err != nil {
+		return false, fmt.Errorf("validate history configuration: %w", err)
+	}
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	if err := historyStore.Reconfigure(historyPath, historyMax); err != nil {
+		return false, fmt.Errorf("reconfigure history: %w", err)
+	}
+	if a.runtimeCtx == nil {
+		candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
+		if restartNeeded {
+			candidate.MediaProxy = a.config.MediaProxy
+		}
+		state.config = candidate
+		a.config, a.storages, a.manager = state.config, state.storages, state.manager
+		a.tmdb, a.history = state.tmdb, state.history
+		return restartNeeded, nil
+	}
+	nextCtx, nextStop := context.WithCancel(a.rootCtx)
+	if err := state.manager.Start(nextCtx); err != nil {
+		nextStop()
+		return false, err
+	}
+	previousStop := a.runtimeStop
+	previousManager := a.manager
+	candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
+	if restartNeeded {
+		candidate.MediaProxy = a.config.MediaProxy
+	}
+	state.config = candidate
+	a.config, a.storages, a.manager = state.config, state.storages, state.manager
+	a.tmdb, a.history, a.runtimeStop = state.tmdb, state.history, nextStop
+	if previousStop != nil {
+		previousStop()
+		go a.waitForRetiredManager(previousManager)
+	}
+	return restartNeeded, nil
+}
+
+func (a *App) waitForRetiredManager(manager *task.Manager) {
+	manager.Wait()
+}
+
+func (a *App) watchConfigFile(ctx context.Context, configPath string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	lastSignature := fileSignature(configPath)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			signature := fileSignature(configPath)
+			if signature == "" || signature == lastSignature {
+				continue
+			}
+			lastSignature = signature
+			a.configMu.Lock()
+			candidate, err := config.LoadDisk(configPath)
+			if err == nil {
+				err = config.RewritePermissions(configPath)
+			}
+			if err == nil {
+				_, err = a.reloadRuntime(candidate)
+			}
+			a.configMu.Unlock()
+			if err != nil {
+				slog.Error("reload externally updated configuration", "error", err)
+			}
+		}
+	}
+}
+
+func fileSignature(filePath string) string {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func (a *App) persistAndReload(path string, candidate, previous config.Config) (bool, error) {
+	previous = previous.Clone()
+	a.runtimeMu.RLock()
+	historyStore := a.history
+	a.runtimeMu.RUnlock()
+	if _, err := buildRuntime(candidate, historyStore); err != nil {
+		return false, err
+	}
+	historyPath, _ := historySettings(candidate)
+	if err := historyStore.ValidateReconfigure(historyPath); err != nil {
+		return false, fmt.Errorf("validate history configuration: %w", err)
+	}
+	if err := config.Save(path, candidate); err != nil {
+		return false, err
+	}
+	restartNeeded, err := a.reloadRuntime(candidate)
+	if err != nil {
+		if rollbackErr := restoreFailedSave(path, previous); rollbackErr != nil {
+			return false, fmt.Errorf("activate configuration: %w; rollback failed: %v", err, rollbackErr)
+		}
+		return false, fmt.Errorf("activate configuration: %w", err)
+	}
+	return restartNeeded, nil
+}
+
+func restoreFailedSave(path string, expected config.Config) error {
+	backup, err := config.LoadDisk(path + ".bak")
+	if err != nil {
+		return fmt.Errorf("load rollback backup: %w", err)
+	}
+	expected.Path = path
+	backup.Path = path
+	if expected.Listen == "" {
+		expected.Listen = ":8024"
+	}
+	if backup.Tasks == nil && len(expected.Tasks) == 0 {
+		expected.Tasks = nil
+	}
+	if !reflect.DeepEqual(backup, expected) {
+		return fmt.Errorf("configuration backup does not match the active configuration")
+	}
+	return config.RestoreBackup(path)
+}
+
+func restartRequired(current, candidate config.Config) bool {
+	currentListen, candidateListen := current.Listen, candidate.Listen
+	if currentListen == "" {
+		currentListen = ":8024"
+	}
+	if candidateListen == "" {
+		candidateListen = ":8024"
+	}
+	return currentListen != candidateListen || current.Admin != candidate.Admin || current.MediaProxy != candidate.MediaProxy
+}
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /", a.basicAuth(a.spaHandler))
+	mux.Handle("GET /", a.withRuntime(a.basicAuth(a.spaHandler)))
 	mux.HandleFunc("GET /robots.txt", robots)
 	mux.HandleFunc("GET /favicon.ico", emptyFavicon)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.Handle("GET /api/bootstrap", a.basicAuth(http.HandlerFunc(a.getBootstrap)))
-	mux.Handle("GET /api/overview", a.basicAuth(http.HandlerFunc(a.getOverview)))
-	mux.Handle("GET /api/tasks", a.basicAuth(http.HandlerFunc(a.listTasks)))
-	mux.Handle("POST /api/tasks/{id}/run", a.basicAuth(http.HandlerFunc(a.runTask)))
-	mux.Handle("POST /api/tasks/{id}/stop", a.basicAuth(http.HandlerFunc(a.stopTask)))
-	mux.Handle("POST /api/tasks/{id}/full-overwrite", a.basicAuth(http.HandlerFunc(a.fullOverwriteTask)))
-	mux.Handle("POST /api/tasks/{id}/replace-content", a.basicAuth(http.HandlerFunc(a.replaceTaskContent)))
-	mux.Handle("DELETE /api/tasks/{id}/generated", a.basicAuth(http.HandlerFunc(a.clearTaskGenerated)))
-	mux.Handle("POST /api/tasks/{id}/covers", a.basicAuth(http.HandlerFunc(a.extractTaskCovers)))
-	mux.Handle("GET /api/tasks/{id}/preview", a.basicAuth(http.HandlerFunc(a.previewTask)))
-	mux.Handle("GET /api/storages", a.basicAuth(http.HandlerFunc(a.listStorages)))
-	mux.Handle("GET /api/storages/{id}/entries", a.basicAuth(http.HandlerFunc(a.listEntries)))
-	mux.Handle("GET /api/storages/{id}/matching-tasks", a.basicAuth(http.HandlerFunc(a.matchingTasks)))
-	mux.Handle("GET /api/storages/{id}/stream-url", a.basicAuth(http.HandlerFunc(a.getStreamURL)))
-	mux.Handle("POST /api/storages/{id}/mkdir", a.basicAuth(http.HandlerFunc(a.mkdirEntry)))
-	mux.Handle("POST /api/storages/{id}/rename", a.basicAuth(http.HandlerFunc(a.renameEntry)))
-	mux.Handle("POST /api/storages/{id}/move", a.basicAuth(http.HandlerFunc(a.moveEntry)))
-	mux.Handle("POST /api/storages/{id}/batch-rename", a.basicAuth(http.HandlerFunc(a.batchRename)))
-	mux.Handle("DELETE /api/storages/{id}/entry", a.basicAuth(http.HandlerFunc(a.deleteEntry)))
-	mux.Handle("GET /api/tmdb/search", a.basicAuth(http.HandlerFunc(a.searchTMDB)))
-	mux.Handle("GET /api/tmdb/poster", a.basicAuth(http.HandlerFunc(a.tmdbPoster)))
-	mux.Handle("GET /api/tmdb/{type}/{id}", a.basicAuth(http.HandlerFunc(a.tmdbDetails)))
-	mux.Handle("POST /api/storages/{id}/tmdb-rename", a.basicAuth(http.HandlerFunc(a.tmdbRename)))
-	mux.Handle("GET /api/config", a.basicAuth(http.HandlerFunc(a.getConfig)))
+	register := func(pattern string, handler http.Handler) { mux.Handle(pattern, a.withRuntime(handler)) }
+	register("GET /api/bootstrap", a.basicAuth(http.HandlerFunc(a.getBootstrap)))
+	register("GET /api/overview", a.basicAuth(http.HandlerFunc(a.getOverview)))
+	register("GET /api/tasks", a.basicAuth(http.HandlerFunc(a.listTasks)))
+	register("POST /api/tasks/{id}/run", a.basicAuth(http.HandlerFunc(a.runTask)))
+	register("POST /api/tasks/{id}/stop", a.basicAuth(http.HandlerFunc(a.stopTask)))
+	register("POST /api/tasks/{id}/full-overwrite", a.basicAuth(http.HandlerFunc(a.fullOverwriteTask)))
+	register("POST /api/tasks/{id}/replace-content", a.basicAuth(http.HandlerFunc(a.replaceTaskContent)))
+	register("DELETE /api/tasks/{id}/generated", a.basicAuth(http.HandlerFunc(a.clearTaskGenerated)))
+	register("POST /api/tasks/{id}/covers", a.basicAuth(http.HandlerFunc(a.extractTaskCovers)))
+	register("GET /api/tasks/{id}/preview", a.basicAuth(http.HandlerFunc(a.previewTask)))
+	register("GET /api/storages", a.basicAuth(http.HandlerFunc(a.listStorages)))
+	register("GET /api/storages/{id}/entries", a.basicAuth(http.HandlerFunc(a.listEntries)))
+	register("GET /api/storages/{id}/matching-tasks", a.basicAuth(http.HandlerFunc(a.matchingTasks)))
+	register("GET /api/storages/{id}/stream-url", a.basicAuth(http.HandlerFunc(a.getStreamURL)))
+	register("POST /api/storages/{id}/mkdir", a.basicAuth(http.HandlerFunc(a.mkdirEntry)))
+	register("POST /api/storages/{id}/rename", a.basicAuth(http.HandlerFunc(a.renameEntry)))
+	register("POST /api/storages/{id}/move", a.basicAuth(http.HandlerFunc(a.moveEntry)))
+	register("POST /api/storages/{id}/batch-rename", a.basicAuth(http.HandlerFunc(a.batchRename)))
+	register("DELETE /api/storages/{id}/entry", a.basicAuth(http.HandlerFunc(a.deleteEntry)))
+	register("GET /api/tmdb/search", a.basicAuth(http.HandlerFunc(a.searchTMDB)))
+	register("GET /api/tmdb/poster", a.basicAuth(http.HandlerFunc(a.tmdbPoster)))
+	register("GET /api/tmdb/{type}/{id}", a.basicAuth(http.HandlerFunc(a.tmdbDetails)))
+	register("POST /api/storages/{id}/tmdb-rename", a.basicAuth(http.HandlerFunc(a.tmdbRename)))
+	register("GET /api/config", a.basicAuth(http.HandlerFunc(a.getConfig)))
 	mux.Handle("PUT /api/config", a.basicAuth(http.HandlerFunc(a.putConfig)))
-	mux.Handle("GET /api/config/managed", a.basicAuth(http.HandlerFunc(a.getManagedConfig)))
+	register("GET /api/config/managed", a.basicAuth(http.HandlerFunc(a.getManagedConfig)))
 	mux.Handle("PUT /api/config/managed", a.basicAuth(http.HandlerFunc(a.putManagedConfig)))
 	mux.Handle("POST /api/config/restore", a.basicAuth(http.HandlerFunc(a.restoreConfig)))
 	mux.Handle("POST /api/config/webhook-token", a.basicAuth(http.HandlerFunc(a.resetWebhookToken)))
-	mux.Handle("GET /api/history", a.basicAuth(http.HandlerFunc(a.listHistory)))
+	register("GET /api/history", a.basicAuth(http.HandlerFunc(a.listHistory)))
 	mux.Handle("GET /api/history/stream", a.basicAuth(http.HandlerFunc(a.streamHistory)))
-	mux.Handle("POST /webhook/run", webhookCORS(http.HandlerFunc(a.webhookRun)))
+	register("POST /webhook/run", webhookCORS(http.HandlerFunc(a.webhookRun)))
 	mux.Handle("OPTIONS /webhook/run", webhookCORS(http.HandlerFunc(webhookOptions)))
-	mux.Handle("POST /webhook/emby", webhookCORS(http.HandlerFunc(a.embyDelete)))
+	register("POST /webhook/emby", webhookCORS(http.HandlerFunc(a.embyDelete)))
 	mux.Handle("OPTIONS /webhook/emby", webhookCORS(http.HandlerFunc(webhookOptions)))
-	mux.Handle("POST /webhook/{token}", webhookCORS(http.HandlerFunc(a.publicWebhook)))
+	register("POST /webhook/{token}", webhookCORS(http.HandlerFunc(a.publicWebhook)))
 	mux.Handle("OPTIONS /webhook/{token}", webhookCORS(http.HandlerFunc(webhookOptions)))
-	mux.Handle("POST /webhook/{token}/file_notify", webhookCORS(http.HandlerFunc(a.cloudDrive2Webhook)))
+	register("POST /webhook/{token}/file_notify", webhookCORS(http.HandlerFunc(a.cloudDrive2Webhook)))
 	mux.Handle("OPTIONS /webhook/{token}/file_notify", webhookCORS(http.HandlerFunc(webhookOptions)))
-	mux.Handle("POST /webhook/{token}/moviepilot", webhookCORS(http.HandlerFunc(a.moviePilotWebhook)))
+	register("POST /webhook/{token}/moviepilot", webhookCORS(http.HandlerFunc(a.moviePilotWebhook)))
 	mux.Handle("OPTIONS /webhook/{token}/moviepilot", webhookCORS(http.HandlerFunc(webhookOptions)))
 	mux.HandleFunc("GET /stream/{storage}", a.stream)
 	return requestLog(mux)
@@ -595,10 +812,10 @@ func (a *App) tmdbRename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) diskConfig() (config.Config, error) {
-	if a.config.Path == "" {
+	if a.configPath == "" {
 		return config.Config{}, fmt.Errorf("configuration persistence is unavailable")
 	}
-	return config.LoadDisk(a.config.Path)
+	return config.LoadDisk(a.configPath)
 }
 
 func (a *App) getConfig(w http.ResponseWriter, _ *http.Request) {
@@ -608,7 +825,7 @@ func (a *App) getConfig(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"config": cfg.Redacted(), "restart_required": false, "backup_available": fileExists(a.config.Path + ".bak")})
+	writeJSON(w, http.StatusOK, map[string]any{"config": cfg.Redacted(), "restart_required": false, "backup_available": fileExists(a.configPath + ".bak")})
 }
 
 func (a *App) putConfig(w http.ResponseWriter, r *http.Request) {
@@ -632,12 +849,13 @@ func (a *App) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	config.PreserveSecrets(&candidate, current)
-	candidate.Version, candidate.Path = config.CurrentVersion, a.config.Path
-	if err := config.Save(a.config.Path, candidate); err != nil {
+	candidate.Version, candidate.Path = config.CurrentVersion, a.configPath
+	restartNeeded, err := a.persistAndReload(a.configPath, candidate, current)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": true, "config": candidate.Redacted()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": restartNeeded, "config": candidate.Redacted()})
 }
 
 func (a *App) getManagedConfig(w http.ResponseWriter, _ *http.Request) {
@@ -652,7 +870,7 @@ func (a *App) getManagedConfig(w http.ResponseWriter, _ *http.Request) {
 		"managed":          redacted.Managed(),
 		"bootstrap":        map[string]any{"listen": cfg.Listen, "public_url": cfg.PublicURL, "admin_username": cfg.Admin.Username},
 		"restart_required": false,
-		"backup_available": fileExists(a.config.Path + ".bak"),
+		"backup_available": fileExists(a.configPath + ".bak"),
 	})
 }
 
@@ -676,32 +894,42 @@ func (a *App) putManagedConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("request body must contain one JSON object"))
 		return
 	}
-	candidate := current
+	candidate := current.Clone()
 	candidate.ApplyManaged(managed)
 	config.PreserveSecrets(&candidate, current)
-	candidate.Version, candidate.Path = config.CurrentVersion, a.config.Path
-	if err := config.Save(a.config.Path, candidate); err != nil {
+	candidate.Version, candidate.Path = config.CurrentVersion, a.configPath
+	restartNeeded, err := a.persistAndReload(a.configPath, candidate, current)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	redacted := candidate.Redacted()
-	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": true, "managed": redacted.Managed()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "restart_required": restartNeeded, "managed": redacted.Managed()})
 }
 
 func (a *App) restoreConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.config.Path == "" {
+	if a.configPath == "" {
 		writeError(w, http.StatusConflict, fmt.Errorf("configuration persistence is unavailable"))
 		return
 	}
-	cfg, err := config.Restore(a.config.Path)
+	cfg, err := config.Restore(a.configPath)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "restored", "restart_required": true, "config": cfg.Redacted()})
+	restartNeeded, err := a.reloadRuntime(cfg)
+	if err != nil {
+		if rollbackErr := config.RestoreBackup(a.configPath); rollbackErr != nil {
+			writeError(w, http.StatusConflict, fmt.Errorf("activate restored configuration: %w; rollback failed: %v", err, rollbackErr))
+			return
+		}
+		writeError(w, http.StatusConflict, fmt.Errorf("activate restored configuration: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "restored", "restart_required": restartNeeded, "config": cfg.Redacted()})
 }
 
 func (a *App) resetWebhookToken(w http.ResponseWriter, _ *http.Request) {
@@ -718,13 +946,15 @@ func (a *App) resetWebhookToken(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(random)
+	previous := cfg
 	cfg.WebhookToken = token
-	if err := config.Save(a.config.Path, cfg); err != nil {
+	restartNeeded, err := a.persistAndReload(a.configPath, cfg, previous)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "webhook_token": token, "restart_required": true})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "webhook_token": token, "restart_required": restartNeeded})
 }
 
 func fileExists(path string) bool { info, err := os.Stat(path); return err == nil && !info.IsDir() }

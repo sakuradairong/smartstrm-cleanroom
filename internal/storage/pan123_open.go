@@ -441,6 +441,7 @@ func (p *Pan123Open) getAccessToken(ctx context.Context, rejectedToken string) (
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Platform", "open_platform")
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err

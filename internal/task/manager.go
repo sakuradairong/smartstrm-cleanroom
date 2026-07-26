@@ -55,6 +55,18 @@ type Manager struct {
 	ctx       context.Context
 	history   *history.Store
 	enqueueMu sync.Mutex
+	workers   sync.WaitGroup
+}
+
+func ValidateRuntime(tasks []config.TaskConfig, storages map[string]storage.Storage) error {
+	for _, taskConfig := range tasks {
+		if taskConfig.Watch {
+			if _, ok := storages[taskConfig.StorageID].(*storage.Local); !ok {
+				return fmt.Errorf("task %q: watch requires local storage", taskConfig.ID)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) SetHistory(store *history.Store) { m.history = store }
@@ -78,6 +90,9 @@ func NewManager(tasks []config.TaskConfig, storages map[string]storage.Storage, 
 }
 
 func (m *Manager) Start(ctx context.Context) error {
+	if err := ValidateRuntime(m.taskConfigs(), m.storages); err != nil {
+		return err
+	}
 	schedules := make(map[string]cronexpr.Schedule)
 	watchers := make(map[string]*pollWatcher)
 	for id, rt := range m.tasks {
@@ -89,10 +104,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			schedules[id] = parsed
 		}
 		if rt.config.Watch {
-			local, ok := m.storages[rt.config.StorageID].(*storage.Local)
-			if !ok {
-				return fmt.Errorf("task %q: watch requires local storage", id)
-			}
+			local := m.storages[rt.config.StorageID].(*storage.Local)
 			watcher, err := newPollWatcher(local, rt.config.Source)
 			if err != nil {
 				return fmt.Errorf("task %q watcher: %w", id, err)
@@ -103,7 +115,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx = ctx
 	for id, rt := range m.tasks {
 		id, rt := id, rt
-		go m.worker(ctx, rt)
+		m.workers.Add(1)
+		go func() {
+			defer m.workers.Done()
+			m.worker(ctx, rt)
+		}()
 		if schedule, ok := schedules[id]; ok {
 			go m.schedule(ctx, id, schedule)
 		}
@@ -119,6 +135,16 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (m *Manager) taskConfigs() []config.TaskConfig {
+	configs := make([]config.TaskConfig, 0, len(m.tasks))
+	for _, rt := range m.tasks {
+		configs = append(configs, rt.config)
+	}
+	return configs
+}
+
+func (m *Manager) Wait() { m.workers.Wait() }
 
 func (m *Manager) Enqueue(taskID, sourcePath string) error {
 	return m.EnqueueConfig(taskID, sourcePath, nil)
@@ -149,6 +175,13 @@ func (m *Manager) EnqueueBatch(requests []BatchRequest, delay time.Duration) err
 	}
 	if delay > 24*time.Hour {
 		return fmt.Errorf("delay must not exceed 24 hours")
+	}
+	if m.ctx != nil {
+		select {
+		case <-m.ctx.Done():
+			return fmt.Errorf("task manager is stopped")
+		default:
+		}
 	}
 	if delay <= 0 {
 		return m.enqueueBatch(prepared)

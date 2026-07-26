@@ -131,6 +131,47 @@ func (s *Store) Subscribe(ctx context.Context) <-chan Event {
 	return channel
 }
 
+// Reconfigure changes persistence and retention without replacing the store,
+// so active SSE subscribers and event IDs remain continuous across reloads.
+func (s *Store) Reconfigure(path string, max int) error {
+	if max <= 0 {
+		max = 2000
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousPath, previousMax := s.path, s.max
+	s.path, s.max = path, max
+	if len(s.events) > max {
+		s.events = append([]Event(nil), s.events[len(s.events)-max:]...)
+	}
+	if err := s.rewriteLocked(); err != nil {
+		s.path, s.max = previousPath, previousMax
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ValidateReconfigure(path string) error {
+	if path == "" || path == s.path {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".history-check-*")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if removeErr := os.Remove(name); err == nil {
+		err = removeErr
+	}
+	return err
+}
+
 func (s *Store) persistLocked(event Event) error {
 	if s.path == "" {
 		return nil

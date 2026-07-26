@@ -136,6 +136,22 @@ type PluginConfig struct {
 	MaxBytes      int    `json:"max_bytes,omitempty"`
 }
 
+// Clone returns a deep copy suitable for transactional edits.
+func (c Config) Clone() Config {
+	clone := c
+	clone.Storages = append([]StorageConfig(nil), c.Storages...)
+	clone.Tasks = make([]TaskConfig, len(c.Tasks))
+	for index, task := range c.Tasks {
+		clone.Tasks[index] = task
+		clone.Tasks[index].MediaExt = append([]string(nil), task.MediaExt...)
+		clone.Tasks[index].CopyExt = append([]string(nil), task.CopyExt...)
+		clone.Tasks[index].Plugins = append([]PluginConfig(nil), task.Plugins...)
+		clone.Tasks[index].KeepLocal = append([]string(nil), task.KeepLocal...)
+	}
+	clone.Plugins = append([]PluginConfig(nil), c.Plugins...)
+	return clone
+}
+
 func Load(path string) (Config, error) {
 	cfg, err := LoadDisk(path)
 	if err != nil {
@@ -143,7 +159,7 @@ func Load(path string) (Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 	var metadata struct {
 		Version *int `json:"version"`
@@ -159,7 +175,7 @@ func Load(path string) (Config, error) {
 	}
 	applyEnv(&cfg)
 	if err := cfg.Validate(); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
 }
@@ -197,6 +213,39 @@ func LoadDisk(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error {
+	return save(path, cfg, true)
+}
+
+// RestoreBackup atomically restores the last-known-good file while preserving
+// that backup for another recovery attempt.
+func RestoreBackup(path string) error {
+	backup, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	var cfg Config
+	decoder := json.NewDecoder(bytes.NewReader(backup))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return fmt.Errorf("decode backup: %w", err)
+	}
+	if cfg.Version == 0 {
+		cfg.Version = CurrentVersion
+	}
+	cfg.Path = path
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate backup: %w", err)
+	}
+	return writeAtomic(path, backup, false)
+}
+
+// RewritePermissions reapplies the private file mode after an external editor
+// replaces the configuration file.
+func RewritePermissions(path string) error {
+	return os.Chmod(path, 0o640)
+}
+
+func save(path string, cfg Config, backup bool) error {
 	if path == "" {
 		return errors.New("configuration path is not available")
 	}
@@ -209,7 +258,7 @@ func Save(path string, cfg Config) error {
 		return fmt.Errorf("encode configuration: %w", err)
 	}
 	data = append(data, '\n')
-	if err := writeAtomic(path, data, true); err != nil {
+	if err := writeAtomic(path, data, backup); err != nil {
 		return fmt.Errorf("write configuration: %w", err)
 	}
 	return nil
@@ -241,7 +290,7 @@ func writeAtomic(path string, data []byte, backup bool) error {
 	}
 	if backup {
 		if current, err := os.ReadFile(path); err == nil {
-			if err := os.WriteFile(path+".bak.tmp", current, 0o600); err != nil {
+			if err := os.WriteFile(path+".bak.tmp", current, 0o640); err != nil {
 				return err
 			}
 			if err := os.Rename(path+".bak.tmp", path+".bak"); err != nil {
@@ -257,7 +306,7 @@ func writeAtomic(path string, data []byte, backup bool) error {
 	}
 	temporaryName := temporary.Name()
 	defer os.Remove(temporaryName)
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := temporary.Chmod(0o640); err != nil {
 		temporary.Close()
 		return err
 	}

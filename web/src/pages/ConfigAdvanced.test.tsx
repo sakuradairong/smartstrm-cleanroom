@@ -119,11 +119,14 @@ test("路径映射表格：回填、新增与删除后提交为对象", async ()
 	await user.click(
 		screen.getByRole("button", { name: /添加 MoviePilot 映射/ }),
 	);
-	await user.type(screen.getByLabelText("MoviePilot 中的路径 1"), "/mp/movie");
-	await user.type(
-		screen.getByLabelText("MoviePilot 对应的存储位置 1"),
-		"openlist/movie",
-	);
+	// A change event matches the final user-visible edit without forcing Ant
+	// Design's whole table to rerender once per character on constrained CI.
+	fireEvent.change(screen.getByLabelText("MoviePilot 中的路径 1"), {
+		target: { value: "/mp/movie" },
+	});
+	fireEvent.change(screen.getByLabelText("MoviePilot 对应的存储位置 1"), {
+		target: { value: "openlist/movie" },
+	});
 	await user.click(screen.getByRole("button", { name: /应用所有修改/ }));
 
 	await waitFor(() =>

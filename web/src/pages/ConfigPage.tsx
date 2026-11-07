@@ -383,8 +383,9 @@ export default function ConfigPage() {
 					</Button>
 					<Popconfirm
 						title={`从配置中删除存储 ${storage.id}？不会删除远端文件。`}
-						okText="确定"
+						okText="删除"
 						cancelText="取消"
+						okButtonProps={{ danger: true }}
 						onConfirm={() => deleteStorage(index)}
 					>
 						<Button type="link" danger>
@@ -415,8 +416,9 @@ export default function ConfigPage() {
 					</Button>
 					<Popconfirm
 						title={`从配置中删除任务 ${task.id}？现有 STRM 文件不会自动删除。`}
-						okText="确定"
+						okText="删除"
 						cancelText="取消"
+						okButtonProps={{ danger: true }}
 						onConfirm={() => deleteTask(index)}
 					>
 						<Button type="link" danger>
@@ -501,8 +503,9 @@ export default function ConfigPage() {
 								extra={
 									<Popconfirm
 										title="生成新 Webhook Token？当前 Token 在重启后失效。"
-										okText="确定"
+										okText="重置"
 										cancelText="取消"
+										okButtonProps={{ danger: true }}
 										onConfirm={() => void resetToken()}
 									>
 										<Button type="text" danger>
@@ -690,6 +693,7 @@ export default function ConfigPage() {
 											className="config-control"
 											id="tmdb-cache"
 											type="number"
+											inputMode="numeric"
 											min={0}
 											value={draft.tmdb.cache_minutes ?? 0}
 											onChange={(event) =>
@@ -832,6 +836,7 @@ export default function ConfigPage() {
 											className="config-control"
 											id="history-max"
 											type="number"
+											inputMode="numeric"
 											min={0}
 											max={100000}
 											value={draft.history.max_entries}
@@ -893,6 +898,7 @@ export default function ConfigPage() {
 											className="config-control"
 											id="media-timeout"
 											type="number"
+											inputMode="numeric"
 											min={0}
 											value={draft.media_tools.timeout_seconds}
 											onChange={(event) =>
@@ -1159,8 +1165,9 @@ export default function ConfigPage() {
 					<Popconfirm
 						title="用上一次备份覆盖当前全部配置？"
 						description="恢复后会立即应用动态设置；少数服务访问设置可能需要重启。"
-						okText="确定"
+						okText="恢复"
 						cancelText="取消"
+						okButtonProps={{ danger: true }}
 						onConfirm={() => void restore()}
 					>
 						<Button disabled={saving || !backupAvailable}>

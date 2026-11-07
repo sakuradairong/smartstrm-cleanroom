@@ -168,6 +168,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
         {mode === 'regex' && (
           <>
             <Input
+              aria-label="正则表达式"
               placeholder="匹配正则"
               value={pattern}
               onChange={(e) => {
@@ -176,6 +177,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
               }}
             />
             <Input
+              aria-label="替换内容"
               placeholder="替换内容"
               value={replacement}
               onChange={(e) => {
@@ -188,6 +190,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
         {mode === 'sequence' && (
           <Space wrap>
             <Input
+              aria-label="顺序前缀"
               placeholder="前缀"
               style={{ width: 140 }}
               value={prefix}
@@ -197,6 +200,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
               }}
             />
             <InputNumber
+              aria-label="起始编号"
               placeholder="起始编号"
               style={{ width: 120 }}
               min={0}
@@ -207,6 +211,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
               }}
             />
             <InputNumber
+              aria-label="补位宽度"
               placeholder="补位宽度"
               style={{ width: 120 }}
               min={1}
@@ -218,6 +223,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
               }}
             />
             <Input
+              aria-label="顺序后缀"
               placeholder="后缀"
               style={{ width: 140 }}
               value={suffix}
@@ -230,6 +236,7 @@ export default function BatchRenameModal({ storageId, path, open, onClose, onDon
         )}
         {mode === 'magic' && (
           <Input
+            aria-label="命名模板"
             placeholder="模板（支持 {title} {season} {episode} {ext}）"
             value={template}
             onChange={(e) => {

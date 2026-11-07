@@ -216,7 +216,7 @@ export default function DashboardPage() {
 							dataSource={(overview.history ?? []).slice(0, 10)}
 							pagination={false}
 							locale={{ emptyText: <Empty description="暂无运行记录" /> }}
-							scroll={{ x: 700 }}
+							scroll={(overview.history?.length ?? 0) > 0 ? { x: 700 } : undefined}
 						/>
 					</Card>
 				</>

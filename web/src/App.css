@@ -33,7 +33,7 @@ body {
 	--app-control-border: #8492a6;
 	--app-text: #0f172a;
 	--app-muted: #475569;
-	--app-subtle: #64748b;
+	--app-subtle: #526071;
 	--app-hover: #f1f5f9;
 	--app-accent: #1d5bd6;
 	--app-accent-ink: #1d5bd6;
@@ -76,7 +76,7 @@ body {
 	--app-control-border: #64748b;
 	--app-text: #f1f5f9;
 	--app-muted: #94a3b8;
-	--app-subtle: #7f8da3;
+	--app-subtle: #94a3b8;
 	--app-hover: #1d2430;
 	--app-accent: #2563eb;
 	--app-accent-ink: #60a5fa;
@@ -526,10 +526,17 @@ body {
 	font-size: 13px;
 }
 
-.app-page-panel .ant-btn-default {
+.app-page-panel .ant-btn-default:not(:disabled) {
 	color: var(--app-text);
 	background: var(--app-surface);
 	border-color: var(--app-border-strong);
+}
+
+.app-page-panel .ant-btn-default:disabled {
+	color: var(--app-muted);
+	background: var(--app-surface-muted);
+	border-color: var(--app-border-strong);
+	box-shadow: none;
 }
 
 .app-page-panel .ant-btn-default:not(:disabled):hover {
@@ -541,16 +548,25 @@ body {
 	box-shadow: 0 1px 2px color-mix(in srgb, var(--app-accent) 30%, transparent);
 }
 
-.app-page-panel .ant-btn-text {
+.app-page-panel .ant-btn-text:not(.ant-btn-dangerous) {
 	color: var(--app-muted);
 }
 
-.app-page-panel .ant-btn-text:not(:disabled):hover {
+.app-page-panel .ant-btn-text:not(.ant-btn-dangerous, :disabled):hover {
 	color: var(--app-accent-ink) !important;
 	background: var(--app-accent-soft) !important;
 }
 
-.app-page-panel .ant-input,
+.app-page-panel .ant-btn-text.ant-btn-dangerous {
+	color: var(--app-danger);
+}
+
+.app-page-panel .ant-btn-text.ant-btn-dangerous:not(:disabled):hover {
+	color: var(--app-danger) !important;
+	background: var(--app-danger-soft) !important;
+}
+
+.app-page-panel .ant-input:not(.ant-input-affix-wrapper .ant-input),
 .app-page-panel .ant-input-affix-wrapper,
 .app-page-panel .ant-select-selector,
 .app-page-panel .ant-input-number,
@@ -609,6 +625,44 @@ body {
 
 .app-navigation-drawer .app-navigation {
 	padding-top: 0;
+}
+
+.storage-context-menu {
+	position: fixed;
+	z-index: 1000;
+	min-width: 170px;
+	padding: 6px;
+	background: var(--app-elevated);
+	border: 1px solid var(--app-border-strong);
+	border-radius: 8px;
+	box-shadow: var(--app-shadow-lg);
+}
+
+.storage-context-menu-item {
+	display: block;
+	width: 100%;
+	padding: 8px 10px;
+	color: var(--app-text);
+	text-align: left;
+	cursor: pointer;
+	background: transparent;
+	border: 0;
+	border-radius: 6px;
+}
+
+.storage-context-menu-item:hover {
+	background: var(--app-hover);
+}
+
+.storage-context-menu-item:focus-visible,
+.tmdb-result-card:focus-visible,
+.storage-table tr[tabindex="0"]:focus-visible {
+	outline: 2px solid var(--app-accent);
+	outline-offset: 2px;
+}
+
+.tmdb-result-card {
+	cursor: pointer;
 }
 
 @media (max-width: 767px) {
@@ -688,7 +742,13 @@ body {
 		min-height: 36px;
 	}
 
-	.app-page-panel .ant-input,
+	.app-page-panel .ant-table-tbody .ant-btn {
+		min-width: 44px;
+		height: 44px;
+		min-height: 44px;
+	}
+
+	.app-page-panel .ant-input:not(.ant-input-affix-wrapper .ant-input),
 	.app-page-panel .ant-input-affix-wrapper,
 	.app-page-panel .ant-select-selector {
 		min-height: 44px;
@@ -729,6 +789,23 @@ body {
 
 	.app-footer > span {
 		white-space: nowrap;
+	}
+}
+
+@media (max-width: 480px) {
+	.tasks-page col:nth-child(2),
+	.tasks-page col:nth-child(3),
+	.tasks-page col:nth-child(4),
+	.tasks-page col:nth-child(5),
+	.tasks-page th:nth-child(2),
+	.tasks-page th:nth-child(3),
+	.tasks-page th:nth-child(4),
+	.tasks-page th:nth-child(5),
+	.tasks-page td:nth-child(2),
+	.tasks-page td:nth-child(3),
+	.tasks-page td:nth-child(4),
+	.tasks-page td:nth-child(5) {
+		display: none;
 	}
 }
 

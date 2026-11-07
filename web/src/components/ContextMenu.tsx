@@ -1,33 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
   key: string
   label: string
-}
-
-// 视觉样式移植自旧 internal/app/app.go 注入的 .storage-menu CSS。
-const MENU_STYLE: CSSProperties = {
-  position: 'fixed',
-  zIndex: 1000,
-  minWidth: 170,
-  padding: '0.35rem',
-  background: '#202832',
-  border: '1px solid #596675',
-  borderRadius: 8,
-  boxShadow: '0 8px 24px #0008',
-}
-
-const ITEM_STYLE: CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  background: 'transparent',
-  border: 'none',
-  color: '#f0f0f0',
-  padding: '4px 8px',
-  cursor: 'pointer',
 }
 
 export default function ContextMenu({
@@ -75,20 +51,26 @@ export default function ContextMenu({
   }, [onClose])
 
   return createPortal(
-    <div ref={ref} role="menu" aria-label="文件操作" style={{ ...MENU_STYLE, left: pos.left, top: pos.top }}>
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="文件操作"
+      className="storage-context-menu"
+      style={{ left: pos.left, top: pos.top }}
+    >
       {items.map((item, index) => (
         <button
           key={item.key}
           type="button"
           role="menuitem"
           autoFocus={index === 0}
-          style={ITEM_STYLE}
+          className="storage-context-menu-item"
           onClick={() => onSelect(item.key)}
         >
           {item.label}
         </button>
       ))}
     </div>,
-    document.body,
+    document.querySelector('.app-shell') ?? document.body,
   )
 }

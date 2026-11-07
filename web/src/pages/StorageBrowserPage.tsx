@@ -39,6 +39,11 @@ export const collator = new Intl.Collator("zh", {
 type SortKey = "name" | "size" | "modified";
 type SortState = { key: SortKey; direction: "asc" | "desc" };
 
+const STORAGE_TYPE_LABELS: Record<string, string> = {
+	local: "本地",
+	webdav: "WebDAV",
+};
+
 export function filterEntries(
 	entries: StorageEntry[],
 	filter: string,
@@ -118,6 +123,7 @@ function RenameModal({
 			cancelText="取消"
 		>
 			<Input
+				aria-label="新名称"
 				value={name}
 				onChange={(e) => setName(e.target.value)}
 				placeholder="新名称"
@@ -151,6 +157,7 @@ function MoveModal({
 			cancelText="取消"
 		>
 			<Input
+				aria-label="目标目录"
 				value={destination}
 				onChange={(e) => setDestination(e.target.value)}
 				placeholder="目标目录"
@@ -184,6 +191,7 @@ function MkdirModal({
 			cancelText="取消"
 		>
 			<Input
+				aria-label="目录名"
 				value={name}
 				onChange={(e) => setName(e.target.value)}
 				placeholder="目录名"
@@ -518,7 +526,7 @@ export default function StorageBrowserPage() {
 		{
 			title: "操作",
 			key: "actions",
-			width: 168,
+			width: 224,
 			fixed: "right",
 			render: (_, entry) => (
 				<Space size={4} className="storage-row-actions">
@@ -556,8 +564,9 @@ export default function StorageBrowserPage() {
 					)}
 					<Popconfirm
 						title={`确定删除 ${entry.name}？此操作不可恢复。`}
-						okText="确定"
+						okText="删除"
 						cancelText="取消"
+						okButtonProps={{ danger: true }}
 						onConfirm={() => void submitDelete(entry)}
 					>
 						<Tooltip title="删除">
@@ -599,7 +608,7 @@ export default function StorageBrowserPage() {
 						value={storageId || undefined}
 						options={storages.map((s) => ({
 							value: s.id,
-							label: `${s.id} (${s.type})`,
+						label: `${s.id} (${STORAGE_TYPE_LABELS[s.type] ?? s.type})`,
 						}))}
 						onChange={(id) => {
 							// 存储立即切换（与旧 storageSelect.value 语义一致），browse 成功后 navRef 再整体更新
@@ -623,6 +632,7 @@ export default function StorageBrowserPage() {
 					aria-label="筛选和显示"
 				>
 					<Input
+						aria-label="筛选文件"
 						placeholder="筛选"
 						allowClear
 						value={filter}
@@ -690,7 +700,7 @@ export default function StorageBrowserPage() {
 						<Typography.Text type="secondary">当前目录为空</Typography.Text>
 					),
 				}}
-				scroll={{ x: nameWidth + 546 }}
+				scroll={{ x: nameWidth + 602 }}
 				onChange={onTableChange}
 				onRow={(entry) => {
 					// 与旧 UI 一致：仅媒体行有右键菜单、tabIndex 与 aria-haspopup

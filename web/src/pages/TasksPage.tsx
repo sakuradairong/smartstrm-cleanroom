@@ -33,7 +33,17 @@ function ResultText({ result, error }: { result?: TaskResult; error?: string }) 
   return (
     <Space direction="vertical" size={0}>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
-      <span>生成 {r.created || 0} / 复制 {r.copied || 0} / 跳过 {r.skipped || 0} / 删除 {r.removed || 0} / 失败 {r.failed || 0}</span>
+      <span>
+        <span className="management-nowrap">生成 {r.created || 0}</span>
+        {' / '}
+        <span className="management-nowrap">复制 {r.copied || 0}</span>
+        {' / '}
+        <span className="management-nowrap">跳过 {r.skipped || 0}</span>
+        {' / '}
+        <span className="management-nowrap">删除 {r.removed || 0}</span>
+        {' / '}
+        <span className="management-nowrap">失败 {r.failed || 0}</span>
+      </span>
     </Space>
   )
 }
@@ -69,6 +79,7 @@ function RunTaskModal({ taskId, onClose, onRan }: { taskId: string | null; onClo
       cancelText="取消"
     >
       <Input
+        aria-label="运行路径"
         placeholder="可选源路径，留空运行整个任务"
         value={path}
         onChange={(e) => setPath(e.target.value)}
@@ -179,7 +190,7 @@ export default function TasksPage() {
     {
       title: '任务',
       key: 'name',
-      width: 180,
+      width: 140,
       render: (_, task) => (
         <>
           <div>{task.name || task.id}</div>
@@ -224,7 +235,7 @@ export default function TasksPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 210,
+      width: 180,
       className: 'management-nowrap',
       render: (_, task) => {
         if (statusOf(data.statuses, task.id)?.running) {
@@ -235,8 +246,8 @@ export default function TasksPage() {
           )
         }
         return (
-          <Space>
-            <Button type="primary" onClick={() => setRunTaskId(task.id)}>运行</Button>
+          <Space size={4} wrap>
+            <Button onClick={() => setRunTaskId(task.id)}>运行</Button>
             <Button onClick={() => setPreviewTaskId(task.id)}>预览</Button>
             {statusOf(data.statuses, task.id)?.error ? (
               <Button onClick={() => navigate(`/history?task_id=${encodeURIComponent(task.id)}`)}>查看日志</Button>
@@ -249,7 +260,7 @@ export default function TasksPage() {
   ]
 
   return (
-    <section className="management-page">
+    <section className="management-page tasks-page">
       <header className="management-heading">
         <div>
           <h2>任务</h2>
@@ -270,7 +281,7 @@ export default function TasksPage() {
           className="management-search"
           aria-label="筛选任务"
           allowClear
-          placeholder="按名称、ID、存储或源路径筛选"
+          placeholder="筛选任务"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
@@ -295,7 +306,6 @@ export default function TasksPage() {
               </Empty>
             ),
         }}
-        scroll={{ x: 900 }}
       />
       <RunTaskModal
         key={`run:${runTaskId ?? 'closed'}`}

@@ -144,6 +144,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
         {tool === 'replace' && (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Input
+              aria-label="查找内容"
               placeholder="查找内容"
               value={from}
               onChange={(e) => {
@@ -152,6 +153,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
               }}
             />
             <Input
+              aria-label="替换内容"
               placeholder="替换为"
               value={to}
               onChange={(e) => {
@@ -180,6 +182,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
         {tool === 'overwrite' && (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Input
+              aria-label="全量覆写路径"
               placeholder="可选源路径，留空覆写整个任务"
               value={overwritePath}
               onChange={(e) => setOverwritePath(e.target.value)}
@@ -187,7 +190,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
             <Popconfirm
               title="全量覆写"
               description="将重新生成该任务的全部生成文件（忽略增量），确认执行？"
-              okText="确定"
+              okText="覆写"
               cancelText="取消"
               okButtonProps={{ danger: true }}
               onConfirm={() => void fullOverwrite()}
@@ -202,6 +205,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
         {tool === 'covers' && (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Input
+              aria-label="封面提取路径"
               placeholder="任务内子目录（/ 表示全部）"
               value={coverPath}
               onChange={(e) => {
@@ -210,6 +214,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
               }}
             />
             <Input
+              aria-label="截帧时间"
               placeholder="截帧时间（例如 10s、1m30s）"
               value={coverPosition}
               onChange={(e) => {
@@ -219,6 +224,7 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
             />
             <Space>
               <Switch
+                aria-label="覆盖已有同名 JPG"
                 checked={coverOverwrite}
                 onChange={(checked) => {
                   setCoverOverwrite(checked)

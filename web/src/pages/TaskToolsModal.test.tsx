@@ -78,9 +78,9 @@ test('全量覆写需要危险确认后才发出 POST', async () => {
   await user.click(within(dialog).getByText('全量覆写'))
   await user.click(within(dialog).getByRole('button', { name: '执行覆写' }))
   // 出现确认框，确认前不得发出请求
-  await screen.findByText(/将重新生成该任务的全部生成文件/)
+  const overwritePrompt = await screen.findByText(/将重新生成该任务的全部生成文件/)
   expect(fetchMock).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('button', { name: /确\s*定/ }))
+  await user.click(within(overwritePrompt.closest('.ant-popover') as HTMLElement).getByRole('button', { name: /覆\s*写/ }))
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/tasks/t1/full-overwrite',

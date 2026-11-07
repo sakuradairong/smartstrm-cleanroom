@@ -72,9 +72,14 @@
 	border-radius: 9px;
 }
 
-.storage-row-actions .ant-btn:hover {
+.storage-row-actions .ant-btn:not(.ant-btn-dangerous):hover {
 	color: var(--app-accent-ink) !important;
 	background: var(--app-accent-soft) !important;
+}
+
+.storage-row-actions .ant-btn-dangerous:hover {
+	color: var(--app-danger) !important;
+	background: var(--app-danger-soft) !important;
 }
 
 @media (max-width: 1120px) {
@@ -114,7 +119,7 @@
 	}
 
 	.storage-row-actions .ant-btn {
-		width: 40px;
-		height: 40px;
+		width: 44px;
+		height: 44px;
 	}
 }

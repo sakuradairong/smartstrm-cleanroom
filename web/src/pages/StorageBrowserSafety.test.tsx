@@ -32,7 +32,7 @@ function setup(
 
 async function switchTo(user: ReturnType<typeof userEvent.setup>, id: string) {
   await user.click(screen.getByRole('combobox', { name: '存储' }))
-  await user.click(await screen.findByText(`${id} (local)`))
+  await user.click(await screen.findByText(`${id} (本地)`))
 }
 
 test('failed storage switch clears old rows and disables mutations', async () => {
@@ -66,7 +66,8 @@ test('slow response cannot restore rows after a newer storage switch', async () 
   expect(screen.queryByText('stale.mkv')).not.toBeInTheDocument()
   const currentRow = screen.getByText('third.mkv').closest('tr')!
   await user.click(within(currentRow).getByRole('button', { name: '删除' }))
-  await user.click(await screen.findByRole('button', { name: /确\s*定/ }))
+  const deletePrompt = await screen.findByText(/确定删除 third\.mkv/)
+  await user.click(within(deletePrompt.closest('.ant-popover') as HTMLElement).getByRole('button', { name: /删\s*除/ }))
   expect(mutations).toEqual(['/api/storages/third/entry?path=%2Fthird.mkv'])
 })
 

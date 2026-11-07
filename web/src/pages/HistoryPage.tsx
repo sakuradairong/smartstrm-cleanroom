@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Button, Input, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Empty, Input, Space, Table, Tag, Typography } from "antd";
 import type { TableProps } from "antd";
 import type { HistoryEvent } from "../api/types";
 import { formatTimestamp } from "../format";
@@ -110,6 +110,7 @@ export default function HistoryPage() {
 			<Space className="management-toolbar" wrap>
 				<Input
 					className="management-search"
+					aria-label="筛选任务 ID"
 					placeholder="任务 ID（留空显示全部）"
 					value={keyword}
 					onChange={(e) => setKeyword(e.target.value)}
@@ -125,14 +126,21 @@ export default function HistoryPage() {
 				pagination={false}
 				columns={columns}
 				dataSource={events}
+				showHeader={events.length > 0}
 				locale={{
-					emptyText: error
-						? "日志暂时无法读取，请重新加载"
-						: filter
-							? "该任务暂无运行日志"
-							: "暂无运行日志",
+					emptyText: (
+						<Empty
+							description={
+								error
+									? "日志暂时无法读取，请重新加载"
+									: filter
+										? "该任务暂无运行日志"
+										: "运行任务后，日志会显示在这里"
+							}
+						/>
+					),
 				}}
-				scroll={{ x: 760 }}
+				scroll={events.length > 0 ? { x: 760 } : undefined}
 			/>
 		</section>
 	);

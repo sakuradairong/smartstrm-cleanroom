@@ -199,7 +199,8 @@ test('删除需要确认后调用 DELETE entry', async () => {
   renderPage()
   const row = await rowOf('a.mkv')
   await user.click(within(row).getByRole('button', { name: /删\s*除/ }))
-  await user.click(await screen.findByRole('button', { name: /确\s*定/ }))
+  const deletePrompt = await screen.findByText(/确定删除 a\.mkv/)
+  await user.click(within(deletePrompt.closest('.ant-popover') as HTMLElement).getByRole('button', { name: /删\s*除/ }))
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/storages/local/entry?path=' + encodeURIComponent('/a.mkv'),

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, App, Button, Input, Modal, Radio, Space, Steps, Table, Typography } from 'antd'
+import type { CSSProperties } from 'react'
+import { Alert, App, Button, Input, Modal, Radio, Space, Steps, Table, theme as antdTheme, Typography } from 'antd'
 import { getJSON, postJSON } from '../api/client'
 
 // 变量说明逐字移植旧 internal/app/ui/index.html 的 tmdbDialog。
@@ -41,6 +42,7 @@ interface TmdbModalProps {
 
 export default function TmdbModal({ storageId, path, open, onClose, onDone }: TmdbModalProps) {
   const { message } = App.useApp()
+  const { token } = antdTheme.useToken()
   const [step, setStep] = useState(0)
   const [query, setQuery] = useState('')
   const [mediaType, setMediaType] = useState<'movie' | 'tv'>('tv')
@@ -190,6 +192,7 @@ export default function TmdbModal({ storageId, path, open, onClose, onDone }: Tm
         {step === 0 && (
           <Space wrap>
             <Input
+              aria-label="影视名称"
               placeholder="影视名称"
               style={{ width: 220 }}
               value={query}
@@ -197,6 +200,7 @@ export default function TmdbModal({ storageId, path, open, onClose, onDone }: Tm
               onPressEnter={() => void search()}
             />
             <Radio.Group
+              aria-label="媒体类型"
               value={mediaType}
               onChange={(e) => setMediaType(e.target.value as 'movie' | 'tv')}
               options={[
@@ -205,6 +209,8 @@ export default function TmdbModal({ storageId, path, open, onClose, onDone }: Tm
               ]}
             />
             <Input
+              aria-label="年份"
+              inputMode="numeric"
               placeholder="年份（可留空）"
               style={{ width: 140 }}
               value={year}
@@ -228,16 +234,18 @@ export default function TmdbModal({ storageId, path, open, onClose, onDone }: Tm
                 key={item.id}
                 type="button"
                 data-testid="tmdb-card"
+                className="tmdb-result-card"
+                aria-label={`选择 ${item.title}`}
                 onClick={() => select(item)}
                 style={{
                   padding: 8,
-                  background: 'transparent',
-                  border: '1px solid rgba(255,255,255,0.2)',
+                  background: token.colorBgElevated,
+                  border: `1px solid ${token.colorBorder}`,
                   borderRadius: 8,
-                  cursor: 'pointer',
-                  color: 'inherit',
+                  color: token.colorText,
                   textAlign: 'left',
-                }}
+                  '--app-accent': token.colorPrimary,
+                } as CSSProperties}
               >
                 {item.poster_path ? (
                   // 海报地址拼接与旧 UI 一致：/api/tmdb/poster?path=<encodeURIComponent(poster_path)>
@@ -263,6 +271,7 @@ export default function TmdbModal({ storageId, path, open, onClose, onDone }: Tm
         {step === 2 && (
           <>
             <Input
+              aria-label="命名模板"
               placeholder="命名模板"
               value={template}
               onChange={(e) => {

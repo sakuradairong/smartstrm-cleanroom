@@ -1,3 +1,11 @@
+import {
+  CustomerServiceOutlined,
+  FileImageOutlined,
+  FileOutlined,
+  FileTextOutlined,
+  FolderOutlined,
+  VideoCameraOutlined,
+} from '@ant-design/icons'
 import type { StorageEntry } from '../api/types'
 
 // 与旧 internal/app/ui/index.html 的 storageFileIcon 完全一致。
@@ -20,8 +28,16 @@ export function isMediaEntry(entry: StorageEntry): boolean {
   return entryKind(entry) === 'video'
 }
 
-const ICONS = { dir: '📁', video: '🎬', image: '🖼️', audio: '🎵', subtitle: '💬', file: '📄' } as const
+const ICONS = {
+  dir: FolderOutlined,
+  video: VideoCameraOutlined,
+  image: FileImageOutlined,
+  audio: CustomerServiceOutlined,
+  subtitle: FileTextOutlined,
+  file: FileOutlined,
+} as const
 
 export default function EntryIcon({ entry }: { entry: StorageEntry }) {
-  return <span aria-hidden="true">{ICONS[entryKind(entry)]}</span>
+  const Icon = ICONS[entryKind(entry)]
+  return <Icon aria-hidden="true" />
 }

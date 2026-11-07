@@ -60,40 +60,74 @@ func (s *Supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // could not be applied live and needs a process restart, which only happens
 // when the listening address of an already-running proxy changes.
 func (s *Supervisor) Apply(cfg config.MediaProxyConfig, publicURL, signingSecret string) (bool, error) {
-	if !cfg.Enabled {
-		s.Stop()
-		return false, nil
-	}
-	handler, err := New(cfg, publicURL, signingSecret)
+	commit, abort, err := s.Prepare(cfg, publicURL, signingSecret)
 	if err != nil {
 		return false, err
 	}
+	defer abort()
+	return commit(), nil
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Publish the handler before starting the listener so the first accepted
-	// request already sees the new configuration.
-	s.handler.Store(&handler)
-	if s.listener != nil {
-		// Already serving: a different address cannot be rebound because the
-		// container only publishes the original port.
-		return s.listen != cfg.Listen, nil
-	}
-	listener, err := net.Listen("tcp", cfg.Listen)
-	if err != nil {
-		s.handler.Store(nil)
-		return false, fmt.Errorf("listen on media proxy address %q: %w", cfg.Listen, err)
-	}
-	server := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
-	done := make(chan struct{})
-	s.listen, s.listener, s.server, s.done = cfg.Listen, listener, server, done
-	go func() {
-		defer close(done)
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			slog.Error("media proxy stopped", "error", serveErr)
+// Prepare reserves resources without changing the active listener or handler.
+// Exactly one commit or abort must be called by the serialized config owner.
+func (s *Supervisor) Prepare(cfg config.MediaProxyConfig, publicURL, secret string) (func() bool, func(), error) {
+	var handler http.Handler
+	var err error
+	if cfg.Enabled {
+		handler, err = New(cfg, publicURL, secret)
+		if err != nil {
+			return nil, nil, err
 		}
-	}()
-	return false, nil
+	}
+	s.mu.Lock()
+	var listener net.Listener
+	if cfg.Enabled && s.listener == nil {
+		listener, err = net.Listen("tcp", cfg.Listen)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, nil, fmt.Errorf("listen on media proxy address %q: %w", cfg.Listen, err)
+		}
+	}
+	finished := false
+	abort := func() {
+		if finished {
+			return
+		}
+		finished = true
+		if listener != nil {
+			listener.Close()
+		}
+		s.mu.Unlock()
+	}
+	commit := func() bool {
+		if finished {
+			return false
+		}
+		finished = true
+		if !cfg.Enabled {
+			s.mu.Unlock()
+			s.Stop()
+			return false
+		}
+		s.handler.Store(&handler)
+		if s.listener != nil {
+			restart := s.listen != cfg.Listen
+			s.mu.Unlock()
+			return restart
+		}
+		server := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+		done := make(chan struct{})
+		s.listen, s.listener, s.server, s.done = cfg.Listen, listener, server, done
+		s.mu.Unlock()
+		go func() {
+			defer close(done)
+			if e := server.Serve(listener); e != nil && e != http.ErrServerClosed {
+				slog.Error("media proxy stopped", "error", e)
+			}
+		}()
+		return false
+	}
+	return commit, abort, nil
 }
 
 // Stop shuts the proxy down and releases its port. It is safe to call when the

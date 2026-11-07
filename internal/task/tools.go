@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -10,11 +11,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/pathpolicy"
 )
 
 type ReplaceResult struct {
 	Scanned int `json:"scanned"`
 	Changed int `json:"changed"`
+}
+
+type ClearResult struct {
+	Scanned int `json:"scanned"`
+	Planned int `json:"planned"`
+	Removed int `json:"removed"`
+	Kept    int `json:"kept"`
 }
 
 type CoverOptions struct {
@@ -236,27 +246,44 @@ func ReplaceSTRMContent(root, from, to string, preview bool) (ReplaceResult, err
 	return result, err
 }
 
-func ClearGenerated(root string) (int, error) {
+func ClearGenerated(root string, preview bool, owned func([]byte) bool) (ClearResult, error) {
 	root, err := safeToolRoot(root)
 	if err != nil {
-		return 0, err
+		return ClearResult{}, err
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
+	result := ClearResult{}
+	err = pathpolicy.WalkFiles(context.Background(), root, func(parent *os.File, current string, entry os.DirEntry) (visitErr error) {
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".strm") {
+			return nil
 		}
-		return 0, err
-	}
-	removed := 0
-	for _, entry := range entries {
-		target := filepath.Join(root, entry.Name())
-		if err := os.RemoveAll(target); err != nil {
-			return removed, err
+		result.Scanned++
+		data, err := pathpolicy.ReadFileAt(parent, entry.Name(), 64<<10)
+		if err != nil {
+			return err
 		}
-		removed++
-	}
-	return removed, nil
+		if !owned(data) {
+			result.Kept++
+			return nil
+		}
+		if preview {
+			result.Planned++
+			return nil
+		}
+		captured, err := pathpolicy.CaptureFileAt(parent, entry.Name())
+		if err != nil {
+			return err
+		}
+		defer func() { visitErr = errors.Join(visitErr, captured.Close()) }()
+		removed, err := captured.RemoveIfUnchanged(data, 64<<10)
+		if removed {
+			result.Planned++
+			result.Removed++
+		} else if err == nil {
+			result.Kept++
+		}
+		return err
+	})
+	return result, err
 }
 
 func safeToolRoot(root string) (string, error) {

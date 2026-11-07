@@ -602,9 +602,21 @@ func TestTaskToolboxAPI(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return !application.manager.Statuses()[0].Running && application.manager.Statuses()[0].Result.Created == 1
 	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "manual.strm"), []byte("https://manual.example/video\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "poster.jpg"), []byte("poster"), 0o644))
+	response = call(http.MethodGet, "/api/tasks/movie/generated", "")
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.JSONEq(t, `{"scanned":2,"planned":1,"removed":0,"kept":1}`, response.Body.String())
+	assert.FileExists(t, filepath.Join(destination, "movie.strm"))
+	assert.FileExists(t, filepath.Join(destination, "manual.strm"))
+	assert.FileExists(t, filepath.Join(destination, "poster.jpg"))
 	response = call(http.MethodDelete, "/api/tasks/movie/generated", "")
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), `"removed":1`)
+	assert.JSONEq(t, `{"scanned":2,"planned":1,"removed":1,"kept":1}`, response.Body.String())
+	assert.NoFileExists(t, filepath.Join(destination, "movie.strm"))
+	assert.FileExists(t, filepath.Join(destination, "manual.strm"))
+	assert.FileExists(t, filepath.Join(destination, "poster.jpg"))
 }
 
 func TestCloudDrive2WebhookMappingAndTaskMatch(t *testing.T) {

@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,7 +106,7 @@ func TestLoadMigratesLegacyAndCreatesBackup(t *testing.T) {
 	assert.JSONEq(t, legacy, string(backup))
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
@@ -121,6 +123,9 @@ func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
 	loaded, err := LoadDisk(path)
 	require.NoError(t, err)
 	assert.Equal(t, "first", loaded.WebhookToken)
+	backup, err := LoadDisk(path + ".bak")
+	require.NoError(t, err)
+	assert.Equal(t, "first", backup.WebhookToken)
 	redacted := first.Redacted()
 	assert.Equal(t, RedactedSecret, redacted.WebhookToken)
 	assert.Equal(t, RedactedSecret, redacted.Storages[0].Token)
@@ -134,6 +139,99 @@ func TestSaveRestoreAndPreserveSecrets(t *testing.T) {
 	PreserveSecrets(&blank, first)
 	assert.Equal(t, "key", blank.TMDB.APIKey)
 	assert.Equal(t, "storage-pass", blank.Storages[0].Password)
+}
+
+func TestSaveRejectsEncodedOutputOverLimitWithoutChangingFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	current := Config{Version: CurrentVersion, PublicURL: "http://localhost", WebhookToken: "current"}
+	previous := current
+	previous.WebhookToken = "previous"
+	require.NoError(t, Save(path, previous))
+	require.NoError(t, Save(path, current))
+	activeBytes, err := os.ReadFile(path)
+	require.NoError(t, err)
+	backupBytes, err := os.ReadFile(path + ".bak")
+	require.NoError(t, err)
+	candidate := current
+	candidate.Tasks = []TaskConfig{{ID: "movies", Name: strings.Repeat("<", 350000), StorageID: "media", Destination: "/strm"}}
+	candidate.Storages = []StorageConfig{{ID: "media", Type: "local", Root: "/media"}}
+
+	err = Save(path, candidate)
+
+	require.ErrorContains(t, err, "configuration exceeds")
+	afterActive, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, activeBytes, afterActive)
+	afterBackup, readErr := os.ReadFile(path + ".bak")
+	require.NoError(t, readErr)
+	require.Equal(t, backupBytes, afterBackup)
+}
+
+func TestRestoreRejectsEncodedOutputOverLimitWithoutChangingFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	active := Config{Version: CurrentVersion, PublicURL: "http://localhost", WebhookToken: "active"}
+	require.NoError(t, Save(path, active))
+	activeBytes, err := os.ReadFile(path)
+	require.NoError(t, err)
+	backup := active
+	backup.WebhookToken = "backup"
+	backup.Storages = []StorageConfig{{ID: "media", Type: "local", Root: "/media"}}
+	backup.Tasks = []TaskConfig{{ID: "movies", Name: strings.Repeat("<", 350000), StorageID: "media", Destination: "/strm"}}
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	require.NoError(t, encoder.Encode(backup))
+	require.Less(t, encoded.Len(), maximumConfigBytes)
+	require.NoError(t, os.WriteFile(path+".bak", encoded.Bytes(), 0o600))
+	backupBytes := append([]byte(nil), encoded.Bytes()...)
+
+	_, err = Restore(path)
+
+	require.ErrorContains(t, err, "configuration exceeds")
+	afterActive, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, activeBytes, afterActive)
+	afterBackup, readErr := os.ReadFile(path + ".bak")
+	require.NoError(t, readErr)
+	require.Equal(t, backupBytes, afterBackup)
+}
+
+func TestBeginRestorePreservesUnreadableOrMissingActiveFile(t *testing.T) {
+	for _, state := range []string{"invalid JSON", "oversize", "missing"} {
+		t.Run(state, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			backup := Config{Version: CurrentVersion, PublicURL: "http://localhost", WebhookToken: "backup"}
+			require.NoError(t, Save(path+".bak", backup))
+			backupBytes, err := os.ReadFile(path + ".bak")
+			require.NoError(t, err)
+			previous := []byte("invalid JSON\n")
+			if state == "oversize" {
+				previous = bytes.Repeat([]byte("x"), maximumConfigBytes+1)
+			}
+			if state != "missing" {
+				require.NoError(t, os.WriteFile(path, previous, 0o600))
+			}
+
+			restored, rollback, err := BeginRestore(path)
+
+			require.NoError(t, err, "a valid backup must remain usable for recovery")
+			require.Equal(t, "backup", restored.WebhookToken)
+			loaded, err := LoadDisk(path)
+			require.NoError(t, err)
+			require.Equal(t, "backup", loaded.WebhookToken)
+			require.NoError(t, rollback())
+			after, err := os.ReadFile(path)
+			if state == "missing" {
+				require.ErrorIs(t, err, os.ErrNotExist)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, previous, after)
+			}
+			afterBackup, err := os.ReadFile(path + ".bak")
+			require.NoError(t, err)
+			require.Equal(t, backupBytes, afterBackup)
+		})
+	}
 }
 
 func TestPan123OpenSecretIsRedactedAndPreserved(t *testing.T) {

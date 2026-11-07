@@ -139,20 +139,23 @@ func (s *Store) Reconfigure(path string, max int) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	previousPath, previousMax := s.path, s.max
+	previousPath, previousMax, previousEvents := s.path, s.max, s.events
 	s.path, s.max = path, max
 	if len(s.events) > max {
 		s.events = append([]Event(nil), s.events[len(s.events)-max:]...)
 	}
 	if err := s.rewriteLocked(); err != nil {
-		s.path, s.max = previousPath, previousMax
+		s.path, s.max, s.events = previousPath, previousMax, previousEvents
 		return err
 	}
 	return nil
 }
 
 func (s *Store) ValidateReconfigure(path string) error {
-	if path == "" || path == s.path {
+	s.mu.RLock()
+	same := path == s.path
+	s.mu.RUnlock()
+	if path == "" || same {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

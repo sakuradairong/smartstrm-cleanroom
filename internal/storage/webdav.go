@@ -16,11 +16,12 @@ import (
 )
 
 type WebDAV struct {
-	endpoint *url.URL
-	root     string
-	username string
-	password string
-	client   *http.Client
+	endpoint     *url.URL
+	root         string
+	username     string
+	password     string
+	client       *http.Client
+	streamClient *http.Client
 }
 
 type davMultiStatus struct {
@@ -42,7 +43,9 @@ func NewWebDAV(endpoint, root, username, password string) (*WebDAV, error) {
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
-	return &WebDAV{endpoint: parsed, root: CleanRemote(root), username: username, password: password, client: &http.Client{Timeout: 30 * time.Second}}, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	return &WebDAV{endpoint: parsed, root: CleanRemote(root), username: username, password: password, client: &http.Client{Timeout: 30 * time.Second}, streamClient: &http.Client{Transport: transport}}, nil
 }
 
 func (w *WebDAV) List(ctx context.Context, remotePath string) ([]Entry, error) {
@@ -219,7 +222,7 @@ func (w *WebDAV) Stream(writer http.ResponseWriter, incoming *http.Request, remo
 			req.Header.Set(header, value)
 		}
 	}
-	resp, err := w.client.Do(req)
+	resp, err := w.streamClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -240,7 +243,11 @@ func (w *WebDAV) Stream(writer http.ResponseWriter, incoming *http.Request, remo
 	if incoming.Method == http.MethodHead || resp.StatusCode == http.StatusNotModified || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		return nil
 	}
-	_, _ = io.Copy(writer, resp.Body)
+	if _, err = io.Copy(writer, resp.Body); err != nil {
+		// Headers have already been sent; abort instead of appending a JSON
+		// error to a media response or presenting a truncated transfer as OK.
+		panic(http.ErrAbortHandler)
+	}
 	return nil
 }
 

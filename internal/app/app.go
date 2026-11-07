@@ -25,6 +25,7 @@ import (
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/history"
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/jsonio"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/mediaproxy"
 	renamer "github.com/sakuradairong/smartstrm-cleanroom/internal/rename"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/signature"
@@ -181,6 +182,7 @@ func (a *App) historyStore() *history.Store {
 }
 
 func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
+	candidate = config.Effective(candidate)
 	restartNeeded := restartRequired(a.bootConfig, candidate)
 	a.runtimeMu.RLock()
 	historyStore := a.history
@@ -189,49 +191,49 @@ func (a *App) reloadRuntime(candidate config.Config) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	start, err := state.manager.PrepareStart()
+	if err != nil {
+		return false, err
+	}
 	historyPath, historyMax := historySettings(candidate)
-	if err := historyStore.ValidateReconfigure(historyPath); err != nil {
+	if err = historyStore.ValidateReconfigure(historyPath); err != nil {
 		return false, fmt.Errorf("validate history configuration: %w", err)
 	}
 	a.runtimeMu.Lock()
 	defer a.runtimeMu.Unlock()
-	if err := historyStore.Reconfigure(historyPath, historyMax); err != nil {
-		return false, fmt.Errorf("reconfigure history: %w", err)
-	}
-	if a.runtimeCtx == nil {
-		candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
-		state.config = candidate
-		a.config, a.storages, a.manager = state.config, state.storages, state.manager
-		a.tmdb, a.history = state.tmdb, state.history
-		return restartNeeded, nil
-	}
-	// Reconcile the proxy before publishing the new runtime so a rejected proxy
-	// configuration leaves the whole reload untouched.
-	proxyRestart, err := a.proxy.Apply(candidate.MediaProxy, candidate.PublicURL, candidate.WebhookToken)
+	release, err := a.manager.FreezeIdle()
 	if err != nil {
-		return false, fmt.Errorf("apply media proxy configuration: %w", err)
-	}
-	restartNeeded = restartNeeded || proxyRestart
-	nextCtx, nextStop := context.WithCancel(a.rootCtx)
-	if err := state.manager.Start(nextCtx); err != nil {
-		nextStop()
 		return false, err
 	}
-	previousStop := a.runtimeStop
-	previousManager := a.manager
+	defer release()
+	var commit func() bool
+	if a.runtimeCtx != nil {
+		var abort func()
+		commit, abort, err = a.proxy.Prepare(candidate.MediaProxy, candidate.PublicURL, candidate.WebhookToken)
+		if err != nil {
+			return false, fmt.Errorf("prepare media proxy: %w", err)
+		}
+		defer abort()
+	}
+	if err = historyStore.Reconfigure(historyPath, historyMax); err != nil {
+		return false, fmt.Errorf("reconfigure history: %w", err)
+	}
+	if a.runtimeCtx != nil {
+		restartNeeded = commit() || restartNeeded
+		nextCtx, nextStop := context.WithCancel(a.rootCtx)
+		// The frozen old manager has no accepted work. Cancel it before publishing
+		// the next generation; its schedulers cannot enqueue after cancellation.
+		if a.runtimeStop != nil {
+			a.runtimeStop()
+		}
+		start(nextCtx)
+		a.runtimeCtx, a.runtimeStop = nextCtx, nextStop
+	}
 	candidate.Admin, candidate.Listen = a.config.Admin, a.config.Listen
 	state.config = candidate
 	a.config, a.storages, a.manager = state.config, state.storages, state.manager
-	a.tmdb, a.history, a.runtimeStop = state.tmdb, state.history, nextStop
-	if previousStop != nil {
-		previousStop()
-		go a.waitForRetiredManager(previousManager)
-	}
+	a.tmdb, a.history = state.tmdb, state.history
 	return restartNeeded, nil
-}
-
-func (a *App) waitForRetiredManager(manager *task.Manager) {
-	manager.Wait()
 }
 
 func (a *App) watchConfigFile(ctx context.Context, configPath string, lastSignature string) {
@@ -246,7 +248,6 @@ func (a *App) watchConfigFile(ctx context.Context, configPath string, lastSignat
 			if signature == "" || signature == lastSignature {
 				continue
 			}
-			lastSignature = signature
 			a.configMu.Lock()
 			candidate, err := config.LoadDisk(configPath)
 			if err == nil {
@@ -258,6 +259,8 @@ func (a *App) watchConfigFile(ctx context.Context, configPath string, lastSignat
 			a.configMu.Unlock()
 			if err != nil {
 				slog.Error("reload externally updated configuration", "error", err)
+			} else {
+				lastSignature = signature
 			}
 		}
 	}
@@ -277,7 +280,7 @@ func (a *App) persistAndReload(path string, candidate, previous config.Config) (
 	a.runtimeMu.RLock()
 	historyStore := a.history
 	a.runtimeMu.RUnlock()
-	if _, err := buildRuntime(candidate, historyStore); err != nil {
+	if _, err := buildRuntime(config.Effective(candidate), historyStore); err != nil {
 		return false, err
 	}
 	historyPath, _ := historySettings(candidate)
@@ -343,6 +346,7 @@ func (a *App) routes() http.Handler {
 	register("POST /api/tasks/{id}/stop", a.basicAuth(http.HandlerFunc(a.stopTask)))
 	register("POST /api/tasks/{id}/full-overwrite", a.basicAuth(http.HandlerFunc(a.fullOverwriteTask)))
 	register("POST /api/tasks/{id}/replace-content", a.basicAuth(http.HandlerFunc(a.replaceTaskContent)))
+	register("GET /api/tasks/{id}/generated", a.basicAuth(http.HandlerFunc(a.previewTaskGenerated)))
 	register("DELETE /api/tasks/{id}/generated", a.basicAuth(http.HandlerFunc(a.clearTaskGenerated)))
 	register("POST /api/tasks/{id}/covers", a.basicAuth(http.HandlerFunc(a.extractTaskCovers)))
 	register("GET /api/tasks/{id}/preview", a.basicAuth(http.HandlerFunc(a.previewTask)))
@@ -442,7 +446,9 @@ func (a *App) runTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Path string `json:"path"`
 	}
-	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
+	if !decodeOptionalBody(w, r, &body) {
+		return
+	}
 	if err := a.manager.Enqueue(r.PathValue("id"), body.Path); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -462,7 +468,7 @@ func (a *App) fullOverwriteTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Path string `json:"path"`
 	}
-	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
+	if !decodeOptionalBody(w, r, &body) {
 		return
 	}
 	if err := a.manager.FullOverwrite(r.PathValue("id"), body.Path); err != nil {
@@ -490,12 +496,22 @@ func (a *App) replaceTaskContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) clearTaskGenerated(w http.ResponseWriter, r *http.Request) {
-	removed, err := a.manager.Clear(r.PathValue("id"))
+	result, err := a.manager.Clear(r.PathValue("id"), false)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"removed": removed})
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) previewTaskGenerated(w http.ResponseWriter, r *http.Request) {
+	result, err := a.manager.Clear(r.PathValue("id"), true)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *App) extractTaskCovers(w http.ResponseWriter, r *http.Request) {
@@ -973,14 +989,8 @@ func (a *App) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var candidate config.Config
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&candidate); err != nil {
+	if err := jsonio.DecodeObject(r.Body, &candidate, 2<<20); err != nil {
 		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("request body must contain one JSON object"))
 		return
 	}
 	config.PreserveSecrets(&candidate, current)
@@ -1019,14 +1029,8 @@ func (a *App) putManagedConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var managed config.ManagedConfig
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&managed); err != nil {
+	if err := jsonio.DecodeObject(r.Body, &managed, 2<<20); err != nil {
 		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("request body must contain one JSON object"))
 		return
 	}
 	candidate := current.Clone()
@@ -1050,14 +1054,14 @@ func (a *App) restoreConfig(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("configuration persistence is unavailable"))
 		return
 	}
-	cfg, err := config.Restore(a.configPath)
+	cfg, rollback, err := config.BeginRestore(a.configPath)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
 	restartNeeded, err := a.reloadRuntime(cfg)
 	if err != nil {
-		if rollbackErr := config.RestoreBackup(a.configPath); rollbackErr != nil {
+		if rollbackErr := rollback(); rollbackErr != nil {
 			writeError(w, http.StatusConflict, fmt.Errorf("activate restored configuration: %w; rollback failed: %v", err, rollbackErr))
 			return
 		}
@@ -1068,6 +1072,10 @@ func (a *App) restoreConfig(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) resetWebhookToken(w http.ResponseWriter, _ *http.Request) {
+	if os.Getenv("WEBHOOK_TOKEN") != "" {
+		writeError(w, http.StatusConflict, fmt.Errorf("webhook token is managed by WEBHOOK_TOKEN; update the environment instead"))
+		return
+	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	cfg, err := a.diskConfig()
@@ -1168,9 +1176,23 @@ func (a *App) storage(id string, w http.ResponseWriter) (storage.Storage, bool) 
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	if err := jsonio.DecodeObject(r.Body, target, 1<<20); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return false
+	}
+	return true
+}
+
+func decodeOptionalBody(w http.ResponseWriter, r *http.Request, target any) bool {
+	data, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("read request body"))
+		return false
+	}
+	if len(data) == 0 {
+		return true
+	}
+	if err = jsonio.DecodeObject(strings.NewReader(string(data)), target, 1<<20); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return false
 	}
@@ -1442,17 +1464,15 @@ func (a *App) cloudDrive2Webhook(w http.ResponseWriter, r *http.Request) {
 			remotePath = path.Dir(remotePath)
 		}
 		for _, taskID := range a.manager.MatchTasks(storageID, remotePath) {
-			if previous, exists := queued[taskID]; !exists || len(remotePath) < len(previous) {
+			if previous, exists := queued[taskID]; exists {
+				queued[taskID] = commonRemoteAncestor(previous, remotePath)
+			} else {
 				queued[taskID] = remotePath
 			}
 		}
 	}
 	ids := make([]string, 0, len(queued))
-	for taskID, remotePath := range queued {
-		if err := a.manager.Enqueue(taskID, remotePath); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
+	for taskID := range queued {
 		ids = append(ids, taskID)
 	}
 	if len(ids) == 0 {
@@ -1460,6 +1480,14 @@ func (a *App) cloudDrive2Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sort.Strings(ids)
+	requests := make([]task.BatchRequest, 0, len(ids))
+	for _, id := range ids {
+		requests = append(requests, task.BatchRequest{TaskID: id, Path: queued[id]})
+	}
+	if err := a.manager.EnqueueBatch(requests, 0); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "queued", "tasks": ids})
 }
 
@@ -1505,17 +1533,15 @@ func (a *App) moviePilotWebhook(w http.ResponseWriter, r *http.Request) {
 			remotePath = path.Dir(remotePath)
 		}
 		for _, taskID := range a.manager.MatchTasks(storageID, remotePath) {
-			if previous, exists := queued[taskID]; !exists || len(remotePath) < len(previous) {
+			if previous, exists := queued[taskID]; exists {
+				queued[taskID] = commonRemoteAncestor(previous, remotePath)
+			} else {
 				queued[taskID] = remotePath
 			}
 		}
 	}
 	ids := make([]string, 0, len(queued))
-	for taskID, remotePath := range queued {
-		if err := a.manager.Enqueue(taskID, remotePath); err != nil {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
+	for taskID := range queued {
 		ids = append(ids, taskID)
 	}
 	if len(ids) == 0 {
@@ -1523,6 +1549,14 @@ func (a *App) moviePilotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sort.Strings(ids)
+	requests := make([]task.BatchRequest, 0, len(ids))
+	for _, id := range ids {
+		requests = append(requests, task.BatchRequest{TaskID: id, Path: queued[id]})
+	}
+	if err := a.manager.EnqueueBatch(requests, 0); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "queued", "tasks": ids})
 }
 
@@ -1930,4 +1964,12 @@ func requestLog(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func commonRemoteAncestor(a, b string) string {
+	a, b = storage.CleanRemote(a), storage.CleanRemote(b)
+	for a != "/" && b != a && !strings.HasPrefix(b, a+"/") {
+		a = path.Dir(a)
+	}
+	return a
 }

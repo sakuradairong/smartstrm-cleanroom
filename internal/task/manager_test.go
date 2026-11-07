@@ -164,3 +164,42 @@ func TestManagerBatchCapacityFailureDoesNotPartiallyEnqueue(t *testing.T) {
 	assert.Equal(t, 0, len(manager.tasks["empty"].queue))
 	assert.Equal(t, cap(manager.tasks["full"].queue), len(manager.tasks["full"].queue))
 }
+
+func TestFreezeIdleRejectsQueuedAndDequeuedWork(t *testing.T) {
+	m := NewManager([]config.TaskConfig{{ID: "one", StorageID: "media", Destination: t.TempDir()}}, nil, NewGenerator("http://localhost", "secret"))
+	release, err := m.FreezeIdle()
+	require.NoError(t, err)
+	release()
+	require.NoError(t, m.Enqueue("one", "/"))
+	_, err = m.FreezeIdle()
+	require.ErrorContains(t, err, "queued")
+	// A worker can dequeue a request before acquiring the operation lock.
+	// The accepted request must still prevent configuration retirement.
+	<-m.tasks["one"].queue
+	_, err = m.FreezeIdle()
+	require.ErrorContains(t, err, "queued")
+}
+
+func TestFreezeIdleRejectsDelayedAndToolWork(t *testing.T) {
+	m := NewManager([]config.TaskConfig{{ID: "one", StorageID: "media", Destination: t.TempDir()}}, nil, NewGenerator("http://localhost", "secret"))
+	m.tasks["one"].operation.Lock()
+	_, err := m.FreezeIdle()
+	require.ErrorContains(t, err, "tools")
+	m.tasks["one"].operation.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.ctx = ctx
+	require.NoError(t, m.EnqueueAfter("one", "/", nil, 30*time.Millisecond))
+	_, err = m.FreezeIdle()
+	require.ErrorContains(t, err, "delayed")
+	cancel()
+	require.Eventually(t, func() bool {
+		release, err := m.FreezeIdle()
+		if err != nil {
+			return false
+		}
+		release()
+		return true
+	}, time.Second, time.Millisecond)
+	require.Empty(t, m.tasks["one"].queue, "canceled delayed request must not be admitted")
+}

@@ -93,7 +93,10 @@ func (l *Local) Mkdir(_ context.Context, remotePath string) error {
 	return os.Mkdir(target, 0o755)
 }
 
-func (l *Local) Rename(_ context.Context, remotePath, newName string) error {
+func (l *Local) Rename(ctx context.Context, remotePath, newName string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ValidateName(newName); err != nil {
 		return err
 	}
@@ -112,10 +115,17 @@ func (l *Local) Rename(_ context.Context, remotePath, newName string) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(source, target)
+	if source == target {
+		_, err := os.Lstat(source)
+		return err
+	}
+	return pathpolicy.RenameNoReplace(source, target)
 }
 
-func (l *Local) Move(_ context.Context, remotePath, destinationDirectory string) error {
+func (l *Local) Move(ctx context.Context, remotePath, destinationDirectory string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	source, err := l.resolveEntry(remotePath)
 	if err != nil {
 		return err
@@ -138,7 +148,7 @@ func (l *Local) Move(_ context.Context, remotePath, destinationDirectory string)
 	if _, err := os.Lstat(target); err == nil {
 		return fmt.Errorf("destination already contains %q", filepath.Base(source))
 	}
-	return os.Rename(source, target)
+	return pathpolicy.RenameNoReplace(source, target)
 }
 
 func (l *Local) DirectURL(_ context.Context, remotePath string) (string, error) {

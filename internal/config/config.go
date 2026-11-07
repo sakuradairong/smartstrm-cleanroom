@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -14,11 +15,13 @@ import (
 	"strings"
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/cronexpr"
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/jsonio"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/pathpolicy"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/urlpolicy"
 )
 
 const CurrentVersion = 1
+const maximumConfigBytes = 2 << 20
 
 var RedactedSecret = strings.Repeat("*", 8)
 
@@ -157,7 +160,7 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
@@ -181,14 +184,12 @@ func Load(path string) (Config, error) {
 }
 
 func LoadDisk(path string) (Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		return Config{}, err
 	}
 	var cfg Config
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := jsonio.DecodeObject(bytes.NewReader(data), &cfg, maximumConfigBytes); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 	if cfg.Version == 0 {
@@ -212,6 +213,22 @@ func LoadDisk(path string) (Config, error) {
 	return cfg, nil
 }
 
+func readConfigFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maximumConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maximumConfigBytes {
+		return nil, fmt.Errorf("configuration exceeds %d bytes", maximumConfigBytes)
+	}
+	return data, nil
+}
+
 func Save(path string, cfg Config) error {
 	return save(path, cfg, true)
 }
@@ -219,14 +236,12 @@ func Save(path string, cfg Config) error {
 // RestoreBackup atomically restores the last-known-good file while preserving
 // that backup for another recovery attempt.
 func RestoreBackup(path string) error {
-	backup, err := os.ReadFile(path + ".bak")
+	backup, err := readConfigFile(path + ".bak")
 	if err != nil {
 		return fmt.Errorf("read backup: %w", err)
 	}
 	var cfg Config
-	decoder := json.NewDecoder(bytes.NewReader(backup))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := jsonio.DecodeObject(bytes.NewReader(backup), &cfg, maximumConfigBytes); err != nil {
 		return fmt.Errorf("decode backup: %w", err)
 	}
 	if cfg.Version == 0 {
@@ -242,7 +257,7 @@ func RestoreBackup(path string) error {
 // RewritePermissions reapplies the private file mode after an external editor
 // replaces the configuration file.
 func RewritePermissions(path string) error {
-	return os.Chmod(path, 0o640)
+	return os.Chmod(path, 0o600)
 }
 
 func save(path string, cfg Config, backup bool) error {
@@ -253,15 +268,39 @@ func save(path string, cfg Config, backup bool) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := encodeConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("encode configuration: %w", err)
 	}
-	data = append(data, '\n')
 	if err := writeAtomic(path, data, backup); err != nil {
 		return fmt.Errorf("write configuration: %w", err)
 	}
 	return nil
+}
+
+// BeginRestore replaces the active file with its backup and returns a rollback
+// that restores the exact previous bytes without modifying the backup.
+func BeginRestore(path string) (Config, func() error, error) {
+	// The previous file is an opaque rollback snapshot. It may itself be
+	// malformed, oversized, or absent when an operator needs backup recovery.
+	previous, err := os.ReadFile(path)
+	existed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Config{}, nil, fmt.Errorf("read active configuration: %w", err)
+	}
+	cfg, err := Restore(path)
+	if err != nil {
+		return Config{}, nil, err
+	}
+	return cfg, func() error {
+		if existed {
+			return writeAtomic(path, previous, false)
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}, nil
 }
 
 func Restore(path string) (Config, error) {
@@ -271,16 +310,27 @@ func Restore(path string) (Config, error) {
 		return Config{}, fmt.Errorf("validate backup: %w", err)
 	}
 	cfg.Version, cfg.Path = CurrentVersion, ""
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := encodeConfig(cfg)
 	if err != nil {
 		return Config{}, err
 	}
-	data = append(data, '\n')
 	if err := writeAtomic(path, data, false); err != nil {
 		return Config{}, err
 	}
 	cfg.Path = path
 	return cfg, nil
+}
+
+func encodeConfig(cfg Config) ([]byte, error) {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	if len(data) > maximumConfigBytes {
+		return nil, fmt.Errorf("configuration exceeds %d bytes", maximumConfigBytes)
+	}
+	return data, nil
 }
 
 func writeAtomic(path string, data []byte, backup bool) error {
@@ -290,7 +340,10 @@ func writeAtomic(path string, data []byte, backup bool) error {
 	}
 	if backup {
 		if current, err := os.ReadFile(path); err == nil {
-			if err := os.WriteFile(path+".bak.tmp", current, 0o640); err != nil {
+			if err := os.WriteFile(path+".bak.tmp", current, 0o600); err != nil {
+				return err
+			}
+			if err := os.Chmod(path+".bak.tmp", 0o600); err != nil {
 				return err
 			}
 			if err := os.Rename(path+".bak.tmp", path+".bak"); err != nil {
@@ -306,7 +359,7 @@ func writeAtomic(path string, data []byte, backup bool) error {
 	}
 	temporaryName := temporary.Name()
 	defer os.Remove(temporaryName)
-	if err := temporary.Chmod(0o640); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
 		return err
 	}
@@ -529,6 +582,33 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	// Output directories are exclusive. Comparing canonical ancestors also
+	// catches aliases through symlinks before a destination has been created.
+	destinations := make([]string, len(c.Tasks))
+	for i, task := range c.Tasks {
+		canonical, err := pathpolicy.Canonical(task.Destination)
+		if err != nil {
+			return fmt.Errorf("task %q destination: %w", task.ID, err)
+		}
+		destinations[i] = canonical
+		for j := 0; j < i; j++ {
+			if pathpolicy.Overlap(canonical, destinations[j]) {
+				return fmt.Errorf("task %q destination overlaps task %q", task.ID, c.Tasks[j].ID)
+			}
+		}
+		for _, local := range c.Storages {
+			if !strings.EqualFold(local.Type, "local") {
+				continue
+			}
+			root, err := pathpolicy.Canonical(local.Root)
+			if err != nil {
+				return err
+			}
+			if pathpolicy.Overlap(root, canonical) {
+				return fmt.Errorf("task %q destination overlaps local storage %q", task.ID, local.ID)
+			}
+		}
+	}
 	return nil
 }
 
@@ -542,8 +622,35 @@ func validatePlugins(scope string, plugins []PluginConfig) error {
 }
 
 func ValidatePlugin(plugin PluginConfig) error {
-	if plugin.Type != "filename_skip" {
+	switch plugin.Type {
+	case "filename_skip":
+	case "skip_regex", "replace_regex", "filename", "strm_replace":
+		if plugin.Pattern == "" {
+			return fmt.Errorf("%s pattern must not be empty", plugin.Type)
+		}
+		if _, err := regexp.Compile(plugin.Pattern); err != nil {
+			return fmt.Errorf("%s pattern: %w", plugin.Type, err)
+		}
 		return nil
+	case "request_delay":
+		if plugin.DelayMS < 0 || plugin.DelayMS > 60000 {
+			return fmt.Errorf("request_delay must be between 0 and 60000ms")
+		}
+		return nil
+	case "illegal_filename":
+		if plugin.MaxBytes < 0 || plugin.MaxBytes > 255 {
+			return fmt.Errorf("illegal_filename max_bytes must be between 0 and 255")
+		}
+		return nil
+	case "custom_strm_filename":
+		if strings.TrimSpace(plugin.Template) == "" || plugin.Template == "." || plugin.Template == ".." || strings.ContainsAny(plugin.Template, "/\\\\\x00\r\n") {
+			return fmt.Errorf("custom_strm_filename template must be a filename")
+		}
+		return nil
+	case "infuse_iso":
+		return nil
+	default:
+		return fmt.Errorf("unsupported plugin %q", plugin.Type)
 	}
 	if plugin.Pattern == "" {
 		return fmt.Errorf("filename_skip pattern must not be empty")
@@ -580,3 +687,8 @@ func applyEnv(cfg *Config) {
 		cfg.WebhookToken = value
 	}
 }
+
+// Effective applies process environment overrides to a detached runtime copy.
+// Persist the disk candidate, never this value, so environment secrets stay out
+// of configuration files and backups.
+func Effective(cfg Config) Config { cfg = cfg.Clone(); applyEnv(&cfg); return cfg }

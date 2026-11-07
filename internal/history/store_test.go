@@ -82,6 +82,24 @@ func TestStoreReconfigureKeepsSubscribersAndEventSequence(t *testing.T) {
 	assert.Contains(t, string(data), `"type":"completed"`)
 }
 
+func TestFailedReconfigureRestoresRetentionAndEvents(t *testing.T) {
+	oldPath := filepath.Join(t.TempDir(), "history.jsonl")
+	store, err := New(oldPath, 10)
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		require.NoError(t, store.Record(Event{TaskID: "task", Type: "queued"}))
+	}
+	before := store.Snapshot("", 10)
+	// Rename of a regular temp file over a directory must fail on all platforms.
+	require.Error(t, store.Reconfigure(t.TempDir(), 1))
+	require.Equal(t, before, store.Snapshot("", 10))
+	require.NoError(t, store.Record(Event{TaskID: "task", Type: "completed"}))
+	require.Len(t, store.Snapshot("", 10), 4)
+	data, err := os.ReadFile(oldPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"type":"completed"`)
+}
+
 func TestRedact(t *testing.T) {
 	assert.NotContains(t, Redact("https://user:pass@example/a?api_key=secret&x=1"), "pass")
 	assert.NotContains(t, Redact("https://example/a?api_key=secret&x=1"), "secret")

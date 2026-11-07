@@ -128,3 +128,32 @@ func TestSupervisorRejectsInvalidConfigurationWithoutDroppingProxy(t *testing.T)
 	assert.Equal(t, http.StatusOK, status, "the running proxy must survive a rejected change")
 	assert.Equal(t, "ok", body)
 }
+
+func TestSupervisorPreparedChangeCanAbortWithoutPublishing(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "first") }))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "second") }))
+	defer second.Close()
+	s := NewSupervisor()
+	t.Cleanup(s.Stop)
+	address := freeAddress(t)
+	_, err := s.Apply(config.MediaProxyConfig{Enabled: true, Listen: address, Upstream: first.URL}, "", "")
+	require.NoError(t, err)
+	_, abort, err := s.Prepare(config.MediaProxyConfig{Enabled: true, Listen: address, Upstream: second.URL}, "", "")
+	require.NoError(t, err)
+	// ServeHTTP reads the active handler without locking Prepare's mutex.
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, httptest.NewRequest("GET", "http://example.test/probe", nil))
+	require.Equal(t, "first", rr.Body.String())
+	abort()
+	_, body := get(t, address)
+	require.Equal(t, "first", body)
+
+	s.Stop()
+	_, abort, err = s.Prepare(config.MediaProxyConfig{Enabled: true, Listen: address, Upstream: second.URL}, "", "")
+	require.NoError(t, err)
+	abort()
+	listener, err := net.Listen("tcp", address)
+	require.NoError(t, err, "aborted preparation must release its reserved listener")
+	require.NoError(t, listener.Close())
+}

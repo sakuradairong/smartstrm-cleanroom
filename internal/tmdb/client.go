@@ -115,15 +115,18 @@ func (c *Client) Image(ctx context.Context, posterPath string) ([]byte, string, 
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.imageBaseURL+"/"+url.PathEscape(name), nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("invalid TMDB image request")
 	}
 	response, err := c.imageClient.Do(request)
 	if err != nil {
-		return nil, "", err
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		return nil, "", fmt.Errorf("TMDB image request failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("TMDB image returned %s", response.Status)
+		return nil, "", fmt.Errorf("TMDB image returned HTTP status %d", response.StatusCode)
 	}
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0]))
 	if contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/webp" {
@@ -131,7 +134,10 @@ func (c *Client) Image(ctx context.Context, posterPath string) ([]byte, string, 
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 5<<20+1))
 	if err != nil {
-		return nil, "", err
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		return nil, "", fmt.Errorf("TMDB image response could not be read")
 	}
 	if len(data) == 0 || len(data) > 5<<20 {
 		return nil, "", fmt.Errorf("TMDB image size is invalid")
@@ -252,23 +258,28 @@ func (c *Client) get(ctx context.Context, endpoint string, values url.Values, ta
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid TMDB request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("TMDB request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("TMDB returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return fmt.Errorf("TMDB returned HTTP status %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("TMDB response could not be read")
 	}
 	if err := json.Unmarshal(data, target); err != nil {
-		return err
+		return fmt.Errorf("TMDB returned invalid JSON")
 	}
 	c.store(requestURL, data)
 	return nil

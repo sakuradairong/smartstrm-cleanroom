@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/pathpolicy"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/signature"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/storage"
 )
@@ -98,11 +99,14 @@ func (g *Generator) Run(ctx context.Context, cfg config.TaskConfig, source stora
 	if err != nil {
 		return result, err
 	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if err := failures.err(); err != nil {
 		return result, err
 	}
 	if cfg.SyncDelete && overridePath == "" {
-		removed, err := removeStale(cfg.Destination, expected, cfg.KeepLocal, cfg.CopyExt)
+		removed, err := removeStale(ctx, cfg.Destination, expected, cfg.KeepLocal, cfg.CopyExt)
 		result.Removed = removed
 		if err != nil {
 			return result, err
@@ -195,6 +199,8 @@ func previewParentPath(root, remotePath string, plugins []config.PluginConfig) (
 		}
 		if sanitized, changed := illegalFilename(name, plugins); changed {
 			name = sanitized
+		} else {
+			name = component
 		}
 		transformed = path.Join(transformed, name)
 	}
@@ -209,6 +215,9 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 	if err != nil {
 		return &directoryListError{err: fmt.Errorf("list %s: %w", current, err)}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := pluginDelay(ctx, cfg.Plugins); err != nil {
 		return err
 	}
@@ -221,6 +230,9 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 		return err
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		result.Scanned++
 		name, skip, err := applyPlugins(entry.Name, entry.IsDir, cfg.Plugins)
 		if err != nil {
@@ -246,7 +258,7 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 			localDirectory := localDestinationDirectory(cfg.Destination, taskRoot, entry.Path)
 			if cfg.DirTimeCheck && !entry.ModTime.IsZero() {
 				if info, statErr := os.Stat(localDirectory); statErr == nil && !info.ModTime().Before(entry.ModTime) {
-					if err := markExisting(localDirectory, expected); err != nil {
+					if err := markExisting(ctx, localDirectory, expected); err != nil {
 						failures.add(result, fmt.Errorf("mark existing directory %q: %w", entry.Path, err))
 						continue
 					}
@@ -263,11 +275,10 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 				return err
 			}
 			if cfg.DirTimeCheck && !entry.ModTime.IsZero() {
-				if err := os.MkdirAll(localDirectory, 0o755); err != nil {
-					failures.add(result, fmt.Errorf("create destination directory for %q: %w", entry.Path, err))
-					continue
+				if err := ctx.Err(); err != nil {
+					return err
 				}
-				if err := os.Chtimes(localDirectory, entry.ModTime, entry.ModTime); err != nil {
+				if err := pathpolicy.SetDirectoryTime(localDirectory, entry.ModTime); err != nil {
 					failures.add(result, fmt.Errorf("set destination directory time for %q: %w", entry.Path, err))
 					continue
 				}
@@ -297,7 +308,7 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 			}
 			relative = path.Join(path.Dir(relative), copiedAssetName(name, mediaNames))
 			target := filepath.Join(cfg.Destination, filepath.FromSlash(relative))
-			if err := copyFile(sourceFile, target); err != nil {
+			if err := copyFile(ctx, sourceFile, target); err != nil {
 				failures.add(result, fmt.Errorf("copy asset %q: %w", entry.Path, err))
 				continue
 			}
@@ -334,7 +345,7 @@ func (g *Generator) walk(ctx context.Context, cfg config.TaskConfig, source stor
 			failures.add(result, fmt.Errorf("build STRM content for %q: %w", entry.Path, err))
 			continue
 		}
-		if err := writeAtomic(target, []byte(content+"\n")); err != nil {
+		if err := pathpolicy.AtomicFile(ctx, target, func(w io.Writer) error { _, err := io.WriteString(w, content+"\n"); return err }); err != nil {
 			failures.add(result, fmt.Errorf("write STRM for %q: %w", entry.Path, err))
 			continue
 		}
@@ -478,20 +489,11 @@ func localDestinationDirectory(destination, taskRoot, remotePath string) string 
 	return filepath.Join(destination, filepath.FromSlash(relative))
 }
 
-func markExisting(root string, expected map[string]struct{}) error {
-	err := filepath.WalkDir(root, func(current string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("visit %q: %w", current, err)
-		}
-		if !entry.IsDir() {
-			expected[filepath.Clean(current)] = struct{}{}
-		}
+func markExisting(ctx context.Context, root string, expected map[string]struct{}) error {
+	return pathpolicy.WalkFiles(ctx, root, func(_ *os.File, current string, _ os.DirEntry) error {
+		expected[filepath.Clean(current)] = struct{}{}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("mark existing files under %q: %w", root, err)
-	}
-	return nil
 }
 
 func (g *Generator) streamURL(storageID, remotePath string) string {
@@ -717,14 +719,14 @@ func writeAtomic(target string, data []byte) error {
 	return nil
 }
 
-func copyFile(source, target string) error {
+func copyFile(ctx context.Context, source, target string) error {
 	input, err := os.Open(source)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
 	defer func() { _ = input.Close() }()
-	err = atomicFile(target, func(writer io.Writer) error {
-		if _, err := io.Copy(writer, input); err != nil {
+	err = pathpolicy.AtomicFile(ctx, target, func(writer io.Writer) error {
+		if _, err := io.Copy(writer, contextReader{ctx: ctx, reader: input}); err != nil {
 			return fmt.Errorf("copy source: %w", err)
 		}
 		return nil
@@ -735,45 +737,25 @@ func copyFile(source, target string) error {
 	return nil
 }
 
-func atomicFile(target string, write func(io.Writer) error) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("create target directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(target), ".smartstrm-copy-*")
-	if err != nil {
-		return fmt.Errorf("create temporary file: %w", err)
-	}
-	temporaryName := temporary.Name()
-	defer func() { _ = os.Remove(temporaryName) }()
-	if err := write(temporary); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Chmod(0o644); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("set target permissions: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close temporary file: %w", err)
-	}
-	if err := os.Rename(temporaryName, target); err != nil {
-		return fmt.Errorf("replace target file: %w", err)
-	}
-	return nil
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
 }
 
-func removeStale(root string, expected map[string]struct{}, keep, copiedExtensions []string) (int, error) {
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func atomicFile(target string, write func(io.Writer) error) error {
+	return pathpolicy.AtomicFile(context.Background(), target, write)
+}
+
+func removeStale(ctx context.Context, root string, expected map[string]struct{}, keep, copiedExtensions []string) (int, error) {
 	removed := 0
-	err := filepath.WalkDir(root, func(current string, entry os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
+	err := pathpolicy.WalkFiles(ctx, root, func(parent *os.File, current string, entry os.DirEntry) error {
 		if _, exists := expected[filepath.Clean(current)]; exists {
 			return nil
 		}
@@ -785,7 +767,10 @@ func removeStale(root string, expected map[string]struct{}, keep, copiedExtensio
 				return nil
 			}
 		}
-		if err := os.Remove(current); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := pathpolicy.RemoveFileAt(parent, entry.Name()); err != nil {
 			return err
 		}
 		removed++

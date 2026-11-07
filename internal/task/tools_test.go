@@ -30,12 +30,37 @@ func TestReplaceSTRMContentAndClear(t *testing.T) {
 	data, err = os.ReadFile(strm)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "https://new")
-	removed, err := ClearGenerated(root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "manual.strm"), []byte("https://manual.example/video\n"), 0o644))
+	owned := func(data []byte) bool { return strings.Contains(string(data), "https://new/media") }
+	clearPreview, err := ClearGenerated(root, true, owned)
 	require.NoError(t, err)
-	assert.Equal(t, 2, removed)
+	assert.Equal(t, ClearResult{Scanned: 2, Planned: 1, Kept: 1}, clearPreview)
+	assert.FileExists(t, strm)
+	assert.FileExists(t, filepath.Join(root, "manual.strm"))
+	result, err := ClearGenerated(root, false, owned)
+	require.NoError(t, err)
+	assert.Equal(t, ClearResult{Scanned: 2, Planned: 1, Removed: 1, Kept: 1}, result)
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
-	assert.Empty(t, entries)
+	assert.Len(t, entries, 3)
+	assert.NoFileExists(t, strm)
+	assert.FileExists(t, filepath.Join(root, "manual.strm"))
+	assert.FileExists(t, filepath.Join(root, "poster.jpg"))
+}
+
+func TestClearGeneratedRevalidatesOwnershipAfterPreview(t *testing.T) {
+	root := t.TempDir()
+	strm := filepath.Join(root, "movie.strm")
+	require.NoError(t, os.WriteFile(strm, []byte("https://owned.example/video\n"), 0o644))
+	owned := func(data []byte) bool { return strings.Contains(string(data), "owned.example") }
+	clearPreview, err := ClearGenerated(root, true, owned)
+	require.NoError(t, err)
+	assert.Equal(t, ClearResult{Scanned: 1, Planned: 1}, clearPreview)
+	require.NoError(t, os.WriteFile(strm, []byte("https://manual.example/video\n"), 0o644))
+	result, err := ClearGenerated(root, false, owned)
+	require.NoError(t, err)
+	assert.Equal(t, ClearResult{Scanned: 1, Kept: 1}, result)
+	assert.FileExists(t, strm)
 }
 
 func TestExtractVideoCoversPreviewAndApply(t *testing.T) {
@@ -116,6 +141,6 @@ func TestExtractVideoCoversSubpathBoundary(t *testing.T) {
 func TestTaskToolsRejectUnsafeRoots(t *testing.T) {
 	_, err := ReplaceSTRMContent("/", "a", "b", false)
 	require.Error(t, err)
-	_, err = ClearGenerated("relative")
+	_, err = ClearGenerated("relative", false, func([]byte) bool { return true })
 	require.Error(t, err)
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/storage"
 )
@@ -107,32 +109,38 @@ func Execute(ctx context.Context, instance storage.Storage, directory string, ch
 		temporary[index] = fmt.Sprintf(".smartstrm-%s-%d", nonce, index)
 	}
 
-	staged := 0
+	staged, finalized := 0, 0
+	rollback := func() error {
+		// Recovery must outlive the failed request, but cannot run indefinitely.
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		var recoveryErr error
+		// Vacate final names before restoring originals so swaps remain safe.
+		for done := 0; done < finalized; done++ {
+			if err := instance.Rename(recoveryCtx, path.Join(directory, changes[done].To), temporary[done]); err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("rollback restage %q to %q: %w", changes[done].To, temporary[done], err))
+			}
+		}
+		for index := staged - 1; index >= 0; index-- {
+			if err := instance.Rename(recoveryCtx, path.Join(directory, temporary[index]), changes[index].From); err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("rollback restore %q to %q: %w", temporary[index], changes[index].From, err))
+			}
+		}
+		return recoveryErr
+	}
 	for index, change := range changes {
 		if err := instance.Rename(ctx, path.Join(directory, change.From), temporary[index]); err != nil {
-			rollbackStaged(ctx, instance, directory, changes, temporary, staged)
-			return fmt.Errorf("stage rename %q: %w", change.From, err)
+			return errors.Join(fmt.Errorf("stage rename %q: %w", change.From, err), rollback())
 		}
 		staged++
 	}
-	finalized := 0
 	for index, change := range changes {
 		if err := instance.Rename(ctx, path.Join(directory, temporary[index]), change.To); err != nil {
-			for done := 0; done < finalized; done++ {
-				_ = instance.Rename(ctx, path.Join(directory, changes[done].To), temporary[done])
-			}
-			rollbackStaged(ctx, instance, directory, changes, temporary, len(changes))
-			return fmt.Errorf("finalize rename %q to %q: %w", change.From, change.To, err)
+			return errors.Join(fmt.Errorf("finalize rename %q to %q: %w", change.From, change.To, err), rollback())
 		}
 		finalized++
 	}
 	return nil
-}
-
-func rollbackStaged(ctx context.Context, instance storage.Storage, directory string, changes []Change, temporary []string, count int) {
-	for index := count - 1; index >= 0; index-- {
-		_ = instance.Rename(ctx, path.Join(directory, temporary[index]), changes[index].From)
-	}
 }
 
 var episodePattern = regexp.MustCompile(`(?i)^(.*?)[ ._-]*(?:S(\d{1,3})[ ._-]*)?E(?:P)?(\d{1,4})(.*)$`)

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/config"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/cronexpr"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/history"
+	"github.com/sakuradairong/smartstrm-cleanroom/internal/signature"
 	"github.com/sakuradairong/smartstrm-cleanroom/internal/storage"
 )
 
@@ -48,14 +51,16 @@ type runtime struct {
 }
 
 type Manager struct {
-	storages  map[string]storage.Storage
-	generator *Generator
-	tasks     map[string]*runtime
-	watchers  []*pollWatcher
-	ctx       context.Context
-	history   *history.Store
-	enqueueMu sync.Mutex
-	workers   sync.WaitGroup
+	storages    map[string]storage.Storage
+	generator   *Generator
+	tasks       map[string]*runtime
+	watchers    []*pollWatcher
+	ctx         context.Context
+	history     *history.Store
+	enqueueMu   sync.Mutex
+	workers     sync.WaitGroup
+	outstanding int
+	delayed     int
 }
 
 func ValidateRuntime(tasks []config.TaskConfig, storages map[string]storage.Storage) error {
@@ -90,8 +95,17 @@ func NewManager(tasks []config.TaskConfig, storages map[string]storage.Storage, 
 }
 
 func (m *Manager) Start(ctx context.Context) error {
-	if err := ValidateRuntime(m.taskConfigs(), m.storages); err != nil {
+	start, err := m.PrepareStart()
+	if err != nil {
 		return err
+	}
+	start(ctx)
+	return nil
+}
+
+func (m *Manager) PrepareStart() (func(context.Context), error) {
+	if err := ValidateRuntime(m.taskConfigs(), m.storages); err != nil {
+		return nil, err
 	}
 	schedules := make(map[string]cronexpr.Schedule)
 	watchers := make(map[string]*pollWatcher)
@@ -99,7 +113,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		if rt.config.Schedule != "" {
 			parsed, err := cronexpr.Parse(rt.config.Schedule)
 			if err != nil {
-				return fmt.Errorf("task %q schedule: %w", id, err)
+				return nil, fmt.Errorf("task %q schedule: %w", id, err)
 			}
 			schedules[id] = parsed
 		}
@@ -107,33 +121,34 @@ func (m *Manager) Start(ctx context.Context) error {
 			local := m.storages[rt.config.StorageID].(*storage.Local)
 			watcher, err := newPollWatcher(local, rt.config.Source)
 			if err != nil {
-				return fmt.Errorf("task %q watcher: %w", id, err)
+				return nil, fmt.Errorf("task %q watcher: %w", id, err)
 			}
 			watchers[id] = watcher
 		}
 	}
-	m.ctx = ctx
-	for id, rt := range m.tasks {
-		id, rt := id, rt
-		m.workers.Add(1)
-		go func() {
-			defer m.workers.Done()
-			m.worker(ctx, rt)
-		}()
-		if schedule, ok := schedules[id]; ok {
-			go m.schedule(ctx, id, schedule)
+	return func(ctx context.Context) {
+		m.ctx = ctx
+		for id, rt := range m.tasks {
+			id, rt := id, rt
+			m.workers.Add(1)
+			go func() {
+				defer m.workers.Done()
+				m.worker(ctx, rt)
+			}()
+			if schedule, ok := schedules[id]; ok {
+				go m.schedule(ctx, id, schedule)
+			}
+			if rt.config.Watch {
+				watcher := watchers[id]
+				m.watchers = append(m.watchers, watcher)
+				go watcher.run(ctx, func() {
+					if err := m.Enqueue(id, ""); err != nil {
+						slog.Warn("watcher could not enqueue task", "task", id, "error", err)
+					}
+				})
+			}
 		}
-		if rt.config.Watch {
-			watcher := watchers[id]
-			m.watchers = append(m.watchers, watcher)
-			go watcher.run(ctx, func() {
-				if err := m.Enqueue(id, ""); err != nil {
-					slog.Warn("watcher could not enqueue task", "task", id, "error", err)
-				}
-			})
-		}
-	}
-	return nil
+	}, nil
 }
 
 func (m *Manager) taskConfigs() []config.TaskConfig {
@@ -190,13 +205,23 @@ func (m *Manager) EnqueueBatch(requests []BatchRequest, delay time.Duration) err
 	if ctx == nil {
 		return fmt.Errorf("task manager is not started")
 	}
+	m.enqueueMu.Lock()
+	if m.ctx.Err() != nil {
+		m.enqueueMu.Unlock()
+		return fmt.Errorf("task manager is stopped")
+	}
+	m.delayed++
+	m.enqueueMu.Unlock()
 	time.AfterFunc(delay, func() {
+		m.enqueueMu.Lock()
+		defer m.enqueueMu.Unlock()
+		m.delayed--
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		if err := m.enqueueBatch(prepared); err != nil {
+		if err := m.enqueueBatchLocked(prepared); err != nil {
 			slog.Warn("delayed task batch enqueue failed", "tasks", len(prepared), "error", err)
 		}
 	})
@@ -206,6 +231,13 @@ func (m *Manager) EnqueueBatch(requests []BatchRequest, delay time.Duration) err
 func (m *Manager) enqueueBatch(requests []BatchRequest) error {
 	m.enqueueMu.Lock()
 	defer m.enqueueMu.Unlock()
+	return m.enqueueBatchLocked(requests)
+}
+
+func (m *Manager) enqueueBatchLocked(requests []BatchRequest) error {
+	if m.ctx != nil && m.ctx.Err() != nil {
+		return fmt.Errorf("task manager is stopped")
+	}
 	counts := make(map[string]int, len(requests))
 	for _, request := range requests {
 		counts[request.TaskID]++
@@ -218,6 +250,7 @@ func (m *Manager) enqueueBatch(requests []BatchRequest) error {
 	}
 	for _, request := range requests {
 		rt := m.tasks[request.TaskID]
+		m.outstanding++
 		rt.queue <- RunRequest{Path: request.Path, Config: request.Config}
 		rt.mu.Lock()
 		rt.status.Queued = len(rt.queue)
@@ -292,17 +325,54 @@ func (m *Manager) ReplaceContent(taskID, from, to string, preview bool) (Replace
 	return ReplaceSTRMContent(cfg.Destination, from, to, preview)
 }
 
-func (m *Manager) Clear(taskID string) (int, error) {
+func (m *Manager) Clear(taskID string, preview bool) (ClearResult, error) {
 	id, cfg, err := m.ResolveTask(taskID)
 	if err != nil {
-		return 0, err
+		return ClearResult{}, err
 	}
 	rt := m.tasks[id]
 	if !rt.operation.TryLock() {
-		return 0, fmt.Errorf("task %q is running", taskID)
+		return ClearResult{}, fmt.Errorf("task %q is running", taskID)
 	}
 	defer rt.operation.Unlock()
-	return ClearGenerated(cfg.Destination)
+	return ClearGenerated(cfg.Destination, preview, func(data []byte) bool {
+		parsed, err := url.Parse(strings.TrimSpace(string(data)))
+		if err != nil {
+			return false
+		}
+		base, err := url.Parse(strings.TrimRight(m.generator.publicURL, "/") + "/stream/")
+		if err != nil {
+			return false
+		}
+		if parsed.Scheme != base.Scheme || parsed.Host != base.Host || parsed.User != nil || parsed.Fragment != "" || parsed.Path != base.Path+cfg.StorageID {
+			return false
+		}
+		q := parsed.Query()
+		locator := q.Get("path")
+		id := q.Get("id")
+		if (locator == "") == (id == "") {
+			return false
+		}
+		if id != "" {
+			locator = "id:" + id
+		}
+		if !signature.Valid(m.generator.token, cfg.StorageID, locator, q.Get("sig")) {
+			return false
+		}
+		if id != "" {
+			provider, ok := m.storages[cfg.StorageID].(storage.FileIDStorage)
+			if !ok {
+				return false
+			}
+			locator, err = provider.ResolveFileID(context.Background(), id)
+			if err != nil {
+				return false
+			}
+		}
+		root := storage.CleanRemote(cfg.Source)
+		cleaned := storage.CleanRemoteExact(locator)
+		return path.Base(parsed.Path) == cfg.StorageID && (cleaned == root || strings.HasPrefix(cleaned, strings.TrimRight(root, "/")+"/"))
+	})
 }
 
 func (m *Manager) ExtractCovers(ctx context.Context, taskID string, options CoverOptions) (CoverResult, error) {
@@ -420,6 +490,9 @@ func (m *Manager) worker(ctx context.Context, rt *runtime) {
 			}
 			m.record(history.Event{TaskID: rt.config.ID, Type: eventType, Path: request.Path, Created: result.Created, Copied: result.Copied, Removed: result.Removed, Skipped: result.Skipped, Failed: result.Failed, Error: errorText})
 			rt.operation.Unlock()
+			m.enqueueMu.Lock()
+			m.outstanding--
+			m.enqueueMu.Unlock()
 		}
 	}
 }
@@ -440,4 +513,29 @@ func (m *Manager) schedule(ctx context.Context, taskID string, cfg cronexpr.Sche
 			}
 		}
 	}
+}
+
+// FreezeIdle reserves the idle manager for a configuration handover. Accepted
+// work includes delayed and dequeued requests, not just visible channel items.
+func (m *Manager) FreezeIdle() (func(), error) {
+	m.enqueueMu.Lock()
+	if m.outstanding != 0 || m.delayed != 0 {
+		m.enqueueMu.Unlock()
+		return nil, fmt.Errorf("tasks are running, queued or delayed; retry configuration after they finish")
+	}
+	locked := make([]*runtime, 0, len(m.tasks))
+	release := func() {
+		for _, rt := range locked {
+			rt.operation.Unlock()
+		}
+		m.enqueueMu.Unlock()
+	}
+	for _, rt := range m.tasks {
+		if !rt.operation.TryLock() {
+			release()
+			return nil, fmt.Errorf("task tools are running; retry configuration after they finish")
+		}
+		locked = append(locked, rt)
+	}
+	return release, nil
 }

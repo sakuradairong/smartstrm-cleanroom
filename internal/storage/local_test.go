@@ -46,6 +46,41 @@ func TestLocalRejectsUnsafeRoots(t *testing.T) {
 	require.ErrorContains(t, err, "resolved local root")
 }
 
+func TestLocalRenameSameNameRequiresSourceEntry(t *testing.T) {
+	for _, kind := range []string{"file", "missing", "dangling symlink", "outside symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "source.mkv")
+			switch kind {
+			case "file":
+				require.NoError(t, os.WriteFile(source, []byte("media"), 0o644))
+			case "missing":
+			case "dangling symlink":
+				require.NoError(t, os.Symlink(filepath.Join(root, "missing.mkv"), source))
+			case "outside symlink":
+				outside := filepath.Join(t.TempDir(), "outside.mkv")
+				require.NoError(t, os.WriteFile(outside, []byte("outside"), 0o644))
+				require.NoError(t, os.Symlink(outside, source))
+			}
+			local, err := NewLocal(root)
+			require.NoError(t, err)
+			before, beforeErr := os.Lstat(source)
+
+			err = local.Rename(context.Background(), "/source.mkv", "source.mkv")
+
+			if kind == "missing" {
+				require.ErrorIs(t, err, os.ErrNotExist)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, beforeErr)
+			after, err := os.Lstat(source)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(before, after), "same-name rename must preserve the source entry")
+		})
+	}
+}
+
 func TestLocalSymlinkContainmentAndMutationSemantics(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

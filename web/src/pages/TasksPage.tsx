@@ -179,6 +179,7 @@ export default function TasksPage() {
     {
       title: '任务',
       key: 'name',
+      width: 180,
       render: (_, task) => (
         <>
           <div>{task.name || task.id}</div>
@@ -189,6 +190,7 @@ export default function TasksPage() {
     {
       title: '存储·源路径',
       key: 'storage',
+      width: 180,
       render: (_, task) => (
         <>
           <div>{task.storage_id}</div>
@@ -199,16 +201,21 @@ export default function TasksPage() {
     {
       title: '调度',
       key: 'schedule',
+      width: 130,
+      className: 'management-nowrap',
       render: (_, task) => task.schedule || '手动',
     },
     {
       title: '状态',
       key: 'status',
+      width: 110,
+      className: 'management-nowrap',
       render: (_, task) => <StatusBadge status={statusOf(data.statuses, task.id)} />,
     },
     {
       title: '结果',
       key: 'result',
+      width: 280,
       render: (_, task) => {
         const status = statusOf(data.statuses, task.id)
         return <ResultText result={status?.result} error={status?.error} />
@@ -217,6 +224,8 @@ export default function TasksPage() {
     {
       title: '操作',
       key: 'actions',
+      width: 210,
+      className: 'management-nowrap',
       render: (_, task) => {
         if (statusOf(data.statuses, task.id)?.running) {
           return (
@@ -258,12 +267,12 @@ export default function TasksPage() {
       </header>
       <Space className="management-toolbar" wrap>
         <Input.Search
+          className="management-search"
           aria-label="筛选任务"
           allowClear
           placeholder="按名称、ID、存储或源路径筛选"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          style={{ width: 320 }}
         />
         <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refresh()}>
           刷新

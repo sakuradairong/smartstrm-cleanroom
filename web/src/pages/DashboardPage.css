@@ -1,5 +1,5 @@
 .dashboard-page .ant-typography-h2 {
-	margin-bottom: 2px;
+	margin-bottom: 4px;
 }
 
 /* The dashboard heading is a Space child, so Space already supplies the gap. */
@@ -10,23 +10,95 @@
 .dashboard-stats {
 	display: grid;
 	grid-template-columns: repeat(5, minmax(0, 1fr));
-	gap: 16px;
+	gap: 14px;
 }
 
 .dashboard-stat {
-	min-height: 116px;
-	border-radius: 12px !important;
+	min-height: 94px;
+	border-radius: var(--app-radius) !important;
+	transition:
+		transform 0.16s ease,
+		box-shadow 0.16s ease,
+		border-color 0.16s ease;
+}
+
+.dashboard-stat:hover {
+	border-color: color-mix(in srgb, var(--app-accent) 34%, var(--app-border)) !important;
+	box-shadow: var(--app-shadow-md);
+	transform: translateY(-2px);
 }
 
 .dashboard-stat .ant-card-body {
 	display: flex;
-	align-items: center;
+	flex-direction: column;
+	justify-content: space-between;
 	height: 100%;
-	padding: 22px 24px;
+	padding: 14px 16px;
 }
 
-.dashboard-stat .ant-statistic-title {
-	margin-bottom: 8px;
+.dashboard-stat-label {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--app-muted);
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.dashboard-stat-icon {
+	display: inline-grid;
+	width: 28px;
+	height: 28px;
+	color: var(--app-accent);
+	font-size: 14px;
+	background: var(--app-accent-soft);
+	border-radius: 8px;
+	place-items: center;
+}
+
+.dashboard-stat.is-success .dashboard-stat-icon {
+	color: var(--app-success);
+	background: var(--app-success-soft);
+}
+
+.dashboard-stat.is-danger .dashboard-stat-icon {
+	color: var(--app-danger);
+	background: var(--app-danger-soft);
+}
+
+.dashboard-stat .ant-statistic-content {
+	margin-top: 8px;
+	font-size: 24px;
+	font-weight: 650;
+	line-height: 1.15;
+	letter-spacing: -0.02em;
+}
+
+.dashboard-stat.is-success .ant-statistic-content {
+	color: var(--app-success);
+}
+
+.dashboard-stat.is-danger .ant-statistic-content {
+	color: var(--app-danger);
+}
+
+.dashboard-history .ant-card-body {
+	padding: 4px 8px 8px;
+}
+
+.dashboard-history .ant-table-container {
+	border: 0;
+	border-radius: 0;
+}
+
+.dashboard-history .ant-table-thead > tr > th {
+	background: var(--app-surface-muted);
+}
+
+.dashboard-time-cell {
+	color: var(--app-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
 @media (max-width: 1100px) {
@@ -39,5 +111,21 @@
 	.dashboard-stats {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 12px;
+	}
+
+	.dashboard-stat {
+		min-height: 84px;
+	}
+
+	.dashboard-stat .ant-card-body {
+		padding: 12px 14px;
+	}
+
+	.dashboard-stat .ant-statistic-content {
+		font-size: 23px;
+	}
+
+	.dashboard-stat:last-child {
+		grid-column: 1 / -1;
 	}
 }

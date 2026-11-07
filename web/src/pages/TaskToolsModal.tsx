@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { App, Button, Input, Modal, Popconfirm, Radio, Space, Switch, Typography } from 'antd'
-import { deleteJSON, postJSON } from '../api/client'
+import { deleteJSON, getJSON, postJSON } from '../api/client'
 
 type Tool = 'replace' | 'overwrite' | 'covers' | 'clear'
 
@@ -15,6 +15,13 @@ interface CoverResult {
   created: number
   skipped: number
   changes: { strm: string; cover: string }[]
+}
+
+interface ClearResult {
+  readonly scanned: number
+  readonly planned: number
+  readonly removed: number
+  readonly kept: number
 }
 
 interface TaskToolsModalProps {
@@ -39,11 +46,13 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
   const [coverPosition, setCoverPosition] = useState('10s')
   const [coverOverwrite, setCoverOverwrite] = useState(false)
   const [coverPreview, setCoverPreview] = useState<CoverResult | null>(null)
+  const [clearPreview, setClearPreview] = useState<ClearResult | null>(null)
 
   const switchTool = (next: Tool) => {
     setTool(next)
     setReplacePreview(null)
     setCoverPreview(null)
+    setClearPreview(null)
   }
 
   const run = async (action: () => Promise<void>) => {
@@ -111,9 +120,15 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
 
   const clearGenerated = () =>
     run(async () => {
-      const result = await deleteJSON<{ removed: number }>(`/api/tasks/${taskId}/generated`)
-      message.success(`已清除 ${result.removed} 个顶层项目`)
+      const result = await deleteJSON<ClearResult>(`/api/tasks/${taskId}/generated`)
+      message.success(`已清除 ${result.removed} 个 STRM 文件`)
+      setClearPreview(null)
       onChanged()
+    })
+
+  const previewClear = () =>
+    run(async () => {
+      setClearPreview(await getJSON<ClearResult>(`/api/tasks/${taskId}/generated`))
     })
 
   return (
@@ -232,18 +247,40 @@ export default function TaskToolsModal({ taskId, open, onClose, onChanged }: Tas
         )}
 
         {tool === 'clear' && (
-          <Popconfirm
-            title="清除生成文件"
-            description="永久删除该任务目录中的全部生成文件？"
-            okText="确定"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => void clearGenerated()}
-          >
-            <Button danger loading={loading}>
-              清除全部生成文件
-            </Button>
-          </Popconfirm>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Typography.Text type="secondary">
+              仅删除当前签名密钥可验证且属于该任务源路径的 STRM。原始媒体、字幕、海报及无法确认归属的文件会保留。
+            </Typography.Text>
+            {clearPreview && (
+              <Typography.Text>
+                扫描 {clearPreview.scanned} 个 STRM，可清除 {clearPreview.planned} 个，保留{' '}
+                {clearPreview.kept} 个
+              </Typography.Text>
+            )}
+            <Space>
+              <Button
+                type={clearPreview ? 'default' : 'primary'}
+                loading={loading}
+                onClick={() => void previewClear()}
+              >
+                检查可清理文件
+              </Button>
+              {clearPreview && clearPreview.planned > 0 && (
+                <Popconfirm
+                  title="确认清除"
+                  description={`将删除 ${clearPreview.planned} 个已验证的 STRM，并保留 ${clearPreview.kept} 个无法确认归属的 STRM。`}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => void clearGenerated()}
+                >
+                  <Button danger loading={loading}>
+                    确认清除
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          </Space>
         )}
       </Space>
     </Modal>

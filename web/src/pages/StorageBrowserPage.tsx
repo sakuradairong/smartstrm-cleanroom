@@ -201,6 +201,8 @@ export default function StorageBrowserPage() {
 	const [path, setPath] = useState("/");
 	const [pathInput, setPathInput] = useState("/");
 	const [entries, setEntries] = useState<StorageEntry[]>([]);
+	const [browsing, setBrowsing] = useState(false);
+	const [browseReady, setBrowseReady] = useState(false);
 	const [filter, setFilter] = useState("");
 	const [sort, setSort] = useState<SortState>({
 		key: "name",
@@ -245,26 +247,40 @@ export default function StorageBrowserPage() {
 	const browse = async (nextPath: string, id = storageId) => {
 		if (!id) return;
 		const seq = ++browseSeq.current;
+		setBrowsing(true);
+		setBrowseReady(false);
+		setEntries([]);
+		setMatchingTasks([]);
+		setMenu(null);
+		setRenameTarget(null);
+		setMoveTarget(null);
+		setMkdirOpen(false);
+		setBatchRenameOpen(false);
+		setTmdbOpen(false);
 		try {
 			const list = await getJSON<StorageEntry[]>(
 				`/api/storages/${encodeURIComponent(id)}/entries?path=${encodeURIComponent(nextPath)}`,
 			);
 			if (seq !== browseSeq.current) return; // 已有更新的浏览请求，丢弃陈旧响应
 			navRef.current = { storageId: id, path: nextPath };
+			setStorageId(id);
 			setEntries(list);
 			setPath(nextPath);
 			setPathInput(nextPath);
-			await loadCurrentTasks(nextPath, id);
+			setBrowseReady(true);
+			void loadCurrentTasks(nextPath, id);
 		} catch (err) {
 			if (seq !== browseSeq.current) return;
 			message.error((err as Error).message);
+		} finally {
+			if (seq === browseSeq.current) setBrowsing(false);
 		}
 	};
 
 	// 与旧 runCurrentDirectory 一致：始终运行第一个匹配任务，body 携带当前目录路径。
 	const runCurrent = async () => {
 		const task = matchingTasks[0];
-		if (!task) return;
+		if (!task || !browseReady || browsing) return;
 		try {
 			await postJSON(`/api/tasks/${encodeURIComponent(task.id)}/run`, { path });
 			message.success(`已将 ${task.name || task.id} 的当前目录加入队列`);
@@ -361,7 +377,8 @@ export default function StorageBrowserPage() {
 
 	const submitRename = async (name: string) => {
 		const entry = renameTarget;
-		if (!entry || actionLoading) return;
+		if (!entry || actionLoading || !browseReady || browsing) return;
+		const seq = browseSeq.current;
 		setActionLoading(`${entry.path}:rename`);
 		try {
 			await postJSON(`/api/storages/${encodeURIComponent(storageId)}/rename`, {
@@ -370,7 +387,7 @@ export default function StorageBrowserPage() {
 			});
 			message.success("已重命名");
 			setRenameTarget(null);
-			await browse(path);
+			if (seq === browseSeq.current) await browse(path, storageId);
 		} catch (err) {
 			message.error((err as Error).message);
 		} finally {
@@ -380,7 +397,8 @@ export default function StorageBrowserPage() {
 
 	const submitMove = async (destination: string) => {
 		const entry = moveTarget;
-		if (!entry || actionLoading) return;
+		if (!entry || actionLoading || !browseReady || browsing) return;
+		const seq = browseSeq.current;
 		setActionLoading(`${entry.path}:move`);
 		try {
 			await postJSON(`/api/storages/${encodeURIComponent(storageId)}/move`, {
@@ -389,7 +407,7 @@ export default function StorageBrowserPage() {
 			});
 			message.success("已移动");
 			setMoveTarget(null);
-			await browse(path);
+			if (seq === browseSeq.current) await browse(path, storageId);
 		} catch (err) {
 			message.error((err as Error).message);
 		} finally {
@@ -398,14 +416,15 @@ export default function StorageBrowserPage() {
 	};
 
 	const submitDelete = async (entry: StorageEntry) => {
-		if (actionLoading) return;
+		if (actionLoading || !browseReady || browsing) return;
+		const seq = browseSeq.current;
 		setActionLoading(`${entry.path}:delete`);
 		try {
 			await deleteJSON(
 				`/api/storages/${encodeURIComponent(storageId)}/entry?path=${encodeURIComponent(entry.path)}`,
 			);
 			message.success("已删除");
-			await browse(path);
+			if (seq === browseSeq.current) await browse(path, storageId);
 		} catch (err) {
 			message.error((err as Error).message);
 		} finally {
@@ -414,7 +433,7 @@ export default function StorageBrowserPage() {
 	};
 
 	const copyURL = async (entry: StorageEntry) => {
-		if (actionLoading) return;
+		if (actionLoading || !browseReady || browsing) return;
 		setActionLoading(`${entry.path}:copy`);
 		try {
 			// 与旧 UI 的 copyURL 一致：直接写入后端返回的 url。
@@ -431,7 +450,8 @@ export default function StorageBrowserPage() {
 	};
 
 	const submitMkdir = async (name: string) => {
-		if (actionLoading) return;
+		if (actionLoading || !browseReady || browsing) return;
+		const seq = browseSeq.current;
 		setActionLoading(`${path}:mkdir`);
 		try {
 			// mkdir 处理器只读 path 字段，与旧 UI 一样发送拼接后的完整路径。
@@ -440,7 +460,7 @@ export default function StorageBrowserPage() {
 			});
 			message.success("已创建");
 			setMkdirOpen(false);
-			await browse(path);
+			if (seq === browseSeq.current) await browse(path, storageId);
 		} catch (err) {
 			message.error((err as Error).message);
 		} finally {
@@ -507,6 +527,7 @@ export default function StorageBrowserPage() {
 							type="text"
 							icon={<EditOutlined />}
 							aria-label="重命名"
+							disabled={!browseReady || browsing || !!actionLoading}
 							loading={actionLoading === `${entry.path}:rename`}
 							onClick={() => setRenameTarget(entry)}
 						/>
@@ -516,6 +537,7 @@ export default function StorageBrowserPage() {
 							type="text"
 							icon={<DragOutlined />}
 							aria-label="移动"
+							disabled={!browseReady || browsing || !!actionLoading}
 							loading={actionLoading === `${entry.path}:move`}
 							onClick={() => setMoveTarget(entry)}
 						/>
@@ -526,6 +548,7 @@ export default function StorageBrowserPage() {
 								type="text"
 								icon={<LinkOutlined />}
 								aria-label="复制STRM地址"
+								disabled={!browseReady || browsing || !!actionLoading}
 								loading={actionLoading === `${entry.path}:copy`}
 								onClick={() => void copyURL(entry)}
 							/>
@@ -543,6 +566,7 @@ export default function StorageBrowserPage() {
 								danger
 								icon={<DeleteOutlined />}
 								aria-label="删除"
+								disabled={!browseReady || browsing || !!actionLoading}
 								loading={actionLoading === `${entry.path}:delete`}
 							/>
 						</Tooltip>
@@ -569,6 +593,7 @@ export default function StorageBrowserPage() {
 					aria-label="位置导航"
 				>
 					<Select
+						disabled={actionLoading !== null}
 						aria-label="存储"
 						placeholder="存储"
 						value={storageId || undefined}
@@ -624,8 +649,8 @@ export default function StorageBrowserPage() {
 							运行当前
 						</Button>
 					)}
-					<Button onClick={() => setMkdirOpen(true)}>新建目录</Button>
-					<Button onClick={() => setBatchRenameOpen(true)}>批量命名</Button>
+					<Button disabled={!browseReady || browsing} onClick={() => setMkdirOpen(true)}>新建目录</Button>
+					<Button disabled={!browseReady || browsing} onClick={() => setBatchRenameOpen(true)}>批量命名</Button>
 					{/* 与旧 UI 的 TMDB 门控一致：未配置 API Key 时禁用并提示 */}
 					<Tooltip
 						title={
@@ -635,7 +660,7 @@ export default function StorageBrowserPage() {
 						}
 					>
 						<Button
-							disabled={!tmdbConfigured}
+							disabled={!tmdbConfigured || !browseReady || browsing}
 							onClick={() => setTmdbOpen(true)}
 						>
 							影视识别
@@ -654,6 +679,7 @@ export default function StorageBrowserPage() {
 				</div>
 			</div>
 			<Table<StorageEntry>
+				loading={browsing}
 				className="storage-table"
 				rowKey="path"
 				pagination={false}

@@ -1,8 +1,12 @@
 .storage-toolbar {
 	display: grid;
-	grid-template-columns: minmax(28rem, 2fr) minmax(20rem, 1fr);
-	gap: 10px 16px;
-	margin-bottom: 12px;
+	grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+	gap: 12px 18px;
+	margin-bottom: 14px;
+	padding: 14px 16px;
+	background: var(--app-surface-muted);
+	border: 1px solid var(--app-border);
+	border-radius: var(--app-radius);
 }
 
 .storage-toolbar-group {
@@ -30,14 +34,19 @@
 }
 
 .storage-actions {
-	grid-column: 1 / -1;
+	grid-column: 1;
 }
 
 .storage-toolbar-status {
-	grid-column: 1 / -1;
+	grid-column: 2;
 	display: flex;
 	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
 	gap: 8px 16px;
+	padding-top: 2px;
+	color: var(--app-muted);
+	font-size: 13px;
 }
 
 .storage-table {
@@ -57,12 +66,18 @@
 }
 
 .storage-row-actions .ant-btn {
-	width: 32px;
-	height: 32px;
+	width: 34px;
+	height: 34px;
 	padding: 0;
+	border-radius: 9px;
 }
 
-@media (max-width: 900px) {
+.storage-row-actions .ant-btn:hover {
+	color: var(--app-accent-ink) !important;
+	background: var(--app-accent-soft) !important;
+}
+
+@media (max-width: 1120px) {
 	.storage-toolbar {
 		grid-template-columns: 1fr;
 	}
@@ -71,9 +86,17 @@
 	.storage-toolbar-status {
 		grid-column: auto;
 	}
+
+	.storage-toolbar-status {
+		justify-content: flex-start;
+	}
 }
 
 @media (max-width: 480px) {
+	.storage-toolbar {
+		padding: 12px;
+	}
+
 	.storage-location .ant-select,
 	.storage-location .ant-input,
 	.storage-display .ant-input-affix-wrapper {
@@ -84,5 +107,14 @@
 	.storage-display .ant-select {
 		flex: 1;
 		min-width: 130px;
+	}
+
+	.storage-row-actions {
+		gap: 8px;
+	}
+
+	.storage-row-actions .ant-btn {
+		width: 40px;
+		height: 40px;
 	}
 }

@@ -14,11 +14,43 @@ import {
 	Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import {
+	ClockCircleOutlined,
+	CloudServerOutlined,
+	ExclamationCircleOutlined,
+	PlayCircleOutlined,
+	UnorderedListOutlined,
+} from "@ant-design/icons";
+import type { ReactNode } from "react";
 import { getOverview } from "../api/bootstrap";
 import type { HistoryEvent, Overview } from "../api/types";
 import { formatTimestamp } from "../format";
 import { usePolling } from "../hooks/usePolling";
 import "./DashboardPage.css";
+
+function StatCard({
+	label,
+	value,
+	icon,
+	tone,
+}: {
+	label: string;
+	value: number;
+	icon: ReactNode;
+	tone?: "success" | "danger";
+}) {
+	return (
+		<Card className={`dashboard-stat${tone ? ` is-${tone}` : ""}`}>
+			<span className="dashboard-stat-label">
+				<span className="dashboard-stat-icon" aria-hidden="true">
+					{icon}
+				</span>
+				{label}
+			</span>
+			<Statistic value={value} />
+		</Card>
+	);
+}
 
 const eventLabel = (type: string) =>
 	({
@@ -33,7 +65,8 @@ const historyColumns: ColumnsType<HistoryEvent> = [
 	{
 		title: "时间",
 		dataIndex: "timestamp",
-		width: 180,
+		width: 196,
+		className: "dashboard-time-cell",
 		render: (value) => formatTimestamp(value),
 	},
 	{ title: "任务", dataIndex: "task_id", width: 140 },
@@ -148,31 +181,35 @@ export default function DashboardPage() {
 						/>
 					) : null}
 					<div className="dashboard-stats">
-						<Card className="dashboard-stat">
-							<Statistic title="任务总数" value={overview.tasks.total} />
-						</Card>
-						<Card className="dashboard-stat">
-							<Statistic
-								title="运行中"
-								value={overview.tasks.running}
-								valueStyle={{ color: "#3f8600" }}
-							/>
-						</Card>
-						<Card className="dashboard-stat">
-							<Statistic
-								title="失败"
-								value={overview.tasks.failed}
-								valueStyle={{ color: "#cf1322" }}
-							/>
-						</Card>
-						<Card className="dashboard-stat">
-							<Statistic title="队列" value={overview.tasks.queued} />
-						</Card>
-						<Card className="dashboard-stat">
-							<Statistic title="存储总数" value={overview.storages} />
-						</Card>
+						<StatCard
+							label="任务总数"
+							value={overview.tasks.total}
+							icon={<UnorderedListOutlined />}
+						/>
+						<StatCard
+							label="运行中"
+							value={overview.tasks.running}
+							icon={<PlayCircleOutlined />}
+							tone={overview.tasks.running > 0 ? "success" : undefined}
+						/>
+						<StatCard
+							label="失败"
+							value={overview.tasks.failed}
+							icon={<ExclamationCircleOutlined />}
+							tone={overview.tasks.failed > 0 ? "danger" : undefined}
+						/>
+						<StatCard
+							label="队列"
+							value={overview.tasks.queued}
+							icon={<ClockCircleOutlined />}
+						/>
+						<StatCard
+							label="存储总数"
+							value={overview.storages}
+							icon={<CloudServerOutlined />}
+						/>
 					</div>
-					<Card title="最近运行">
+					<Card className="dashboard-history" title="最近运行">
 						<Table
 							rowKey="id"
 							columns={historyColumns}

@@ -465,8 +465,20 @@ export default function ConfigPage() {
 	}
 
 	return (
-		<Space direction="vertical" size="large" style={{ width: "100%" }}>
-			<Typography.Title level={2}>配置</Typography.Title>
+		<Space
+			className="config-page"
+			direction="vertical"
+			size="large"
+			style={{ width: "100%" }}
+		>
+			<header className="management-heading">
+				<div>
+					<h2>配置</h2>
+					<Typography.Text type="secondary">
+						管理媒体存储、STRM 任务与系统运行参数
+					</Typography.Text>
+				</div>
+			</header>
 			<Alert
 				type="info"
 				showIcon
@@ -476,7 +488,6 @@ export default function ConfigPage() {
 			{error ? <Alert type="error" showIcon message={error} /> : null}
 			<Tabs
 				className="config-tabs"
-				type="card"
 				activeKey={activeTab}
 				onChange={changeTab}
 				items={[
@@ -1126,7 +1137,7 @@ export default function ConfigPage() {
 				]}
 			/>
 
-			<Card className="config-save-bar">
+			<Card className="config-save-bar" data-dirty={dirty ? "true" : "false"}>
 				<Space wrap>
 					<Button
 						type="primary"

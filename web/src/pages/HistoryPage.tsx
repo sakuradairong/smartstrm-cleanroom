@@ -43,12 +43,15 @@ export default function HistoryPage() {
 		{
 			title: "时间",
 			key: "timestamp",
+			width: 190,
+			className: "management-nowrap",
 			render: (_, event) => formatTimestamp(event.timestamp),
 		},
-		{ title: "任务", dataIndex: "task_id", key: "task_id" },
+		{ title: "任务", dataIndex: "task_id", key: "task_id", width: 160 },
 		{
 			title: "事件",
 			key: "type",
+			width: 100,
 			render: (_, event) => (
 				<Tag
 					color={
@@ -63,10 +66,11 @@ export default function HistoryPage() {
 				</Tag>
 			),
 		},
-		{ title: "路径", key: "path", render: (_, event) => event.path || "" },
+		{ title: "路径", key: "path", width: 240, render: (_, event) => event.path || "" },
 		{
 			title: "结果·错误",
 			key: "result",
+			width: 320,
 			render: (_, event) => resultText(event),
 		},
 	];
@@ -105,11 +109,11 @@ export default function HistoryPage() {
 			) : null}
 			<Space className="management-toolbar" wrap>
 				<Input
+					className="management-search"
 					placeholder="任务 ID（留空显示全部）"
 					value={keyword}
 					onChange={(e) => setKeyword(e.target.value)}
 					onPressEnter={applyFilter}
-					style={{ width: 240 }}
 					allowClear
 				/>
 				<Button type="primary" onClick={applyFilter}>

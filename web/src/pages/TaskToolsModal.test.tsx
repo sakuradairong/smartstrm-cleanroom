@@ -90,10 +90,13 @@ test('全量覆写需要危险确认后才发出 POST', async () => {
   expect(await screen.findByText('全量覆写已加入队列')).toBeInTheDocument()
 })
 
-test('清除生成文件需要危险确认并调用 DELETE', async () => {
+test('清除生成文件先预览计数再确认调用 DELETE', async () => {
   const fetchMock = stubFetch((url, init) => {
+    if (url === '/api/tasks/t1/generated' && (!init?.method || init.method === 'GET')) {
+      return { body: { scanned: 2, planned: 1, removed: 0, kept: 1 } }
+    }
     if (url === '/api/tasks/t1/generated' && init?.method === 'DELETE') {
-      return { body: { removed: 7 } }
+      return { body: { scanned: 2, planned: 1, removed: 1, kept: 1 } }
     }
     throw new Error('unexpected fetch: ' + url)
   })
@@ -101,17 +104,25 @@ test('清除生成文件需要危险确认并调用 DELETE', async () => {
   const { onChanged } = renderModal()
   const dialog = await screen.findByRole('dialog')
   await user.click(within(dialog).getByText('清除生成文件'))
-  await user.click(within(dialog).getByRole('button', { name: '清除全部生成文件' }))
-  await screen.findByText(/永久删除该任务目录中的全部生成文件/)
-  expect(fetchMock).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('button', { name: /确\s*定/ }))
+  await user.click(within(dialog).getByRole('button', { name: '检查可清理文件' }))
+  expect(await within(dialog).findByText('扫描 2 个 STRM，可清除 1 个，保留 1 个')).toBeInTheDocument()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/tasks/t1/generated')
+  expect(fetchMock.mock.calls[0][1]).toBeUndefined()
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/tasks/t1/generated',
+    expect.objectContaining({ method: 'DELETE' }),
+  )
+  await user.click(within(dialog).getByRole('button', { name: '确认清除' }))
+  await screen.findByText(/将删除 1 个已验证的 STRM，并保留 1 个无法确认归属的 STRM/)
+  await user.click(screen.getByRole('button', { name: /删\s*除/ }))
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/tasks/t1/generated',
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
-  expect(await screen.findByText('已清除 7 个顶层项目')).toBeInTheDocument()
+  expect(await screen.findByText('已清除 1 个 STRM 文件')).toBeInTheDocument()
   expect(onChanged).toHaveBeenCalled()
 })
 

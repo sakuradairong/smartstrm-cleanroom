@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router'
-import { App as AntApp, Button, ConfigProvider, Drawer, Layout, Menu, Spin, theme as antdTheme, Typography } from 'antd'
+import { App as AntApp, Button, ConfigProvider, Drawer, Layout, Menu, Spin, Tooltip, Typography } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { DashboardOutlined, FolderOpenOutlined, GithubOutlined, HistoryOutlined, MenuOutlined, MoonOutlined, PlaySquareOutlined, SettingOutlined, SunOutlined, UnorderedListOutlined } from '@ant-design/icons'
-import { useTheme } from './theme'
+import { getAntdThemeConfig, useTheme } from './theme'
 import './App.css'
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
@@ -15,11 +15,11 @@ const ConfigPage = lazy(() => import('./pages/ConfigPage'))
 const { Sider, Content, Footer } = Layout
 
 const NAV_ITEMS = [
-  { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
-  { key: '/tasks', icon: <UnorderedListOutlined />, label: <NavLink to="/tasks">任务</NavLink> },
-  { key: '/storage', icon: <FolderOpenOutlined />, label: <NavLink to="/storage">存储浏览</NavLink> },
-  { key: '/history', icon: <HistoryOutlined />, label: <NavLink to="/history">运行日志</NavLink> },
-  { key: '/config', icon: <SettingOutlined />, label: <NavLink to="/config">配置</NavLink> },
+  { key: '/', title: '仪表盘', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
+  { key: '/tasks', title: '任务', icon: <UnorderedListOutlined />, label: <NavLink to="/tasks">任务</NavLink> },
+  { key: '/storage', title: '存储浏览', icon: <FolderOpenOutlined />, label: <NavLink to="/storage">存储浏览</NavLink> },
+  { key: '/history', title: '运行日志', icon: <HistoryOutlined />, label: <NavLink to="/history">运行日志</NavLink> },
+  { key: '/config', title: '配置', icon: <SettingOutlined />, label: <NavLink to="/config">配置</NavLink> },
 ]
 
 function selectedKey(pathname: string): string {
@@ -33,14 +33,15 @@ export default function App() {
   const { mode, toggle } = useTheme()
   const location = useLocation()
   const [navigationOpen, setNavigationOpen] = useState(false)
-  const algorithm = useMemo(
-    () => (mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm),
-    [mode],
-  )
+  const themeConfig = useMemo(() => getAntdThemeConfig(mode), [mode])
+  const currentNavigation = NAV_ITEMS.find(item => item.key === selectedKey(location.pathname)) ?? NAV_ITEMS[0]
   useEffect(() => setNavigationOpen(false), [location.pathname])
 
   const navigation = (
     <nav className="app-navigation" aria-label="主导航">
+      <span className="app-nav-label" aria-hidden="true">
+        工作区
+      </span>
       <Menu
         theme={mode === 'dark' ? 'dark' : 'light'}
         mode="inline"
@@ -55,16 +56,7 @@ export default function App() {
     <ConfigProvider
       locale={zhCN}
       button={{ autoInsertSpace: false }}
-      theme={{
-        algorithm,
-        token: {
-          colorPrimary: '#0d6efd',
-          borderRadius: 10,
-          borderRadiusLG: 12,
-          controlHeight: 40,
-          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif',
-        },
-      }}
+      theme={themeConfig}
     >
       <AntApp>
         <Layout className="app-shell" data-theme={mode}>
@@ -74,11 +66,14 @@ export default function App() {
             breakpoint="md"
             collapsedWidth={0}
             trigger={null}
-            width={280}
+            width={236}
           >
             <div className="app-brand">
               <span className="app-brand-mark" aria-hidden="true"><PlaySquareOutlined /></span>
-              <span className="app-brand-name">SmartStrm</span>
+              <span className="app-brand-copy">
+                <span className="app-brand-name">SmartStrm</span>
+                <span className="app-brand-tagline">Media automation</span>
+              </span>
             </div>
             {navigation}
             <div className="app-sidebar-meta">
@@ -97,13 +92,25 @@ export default function App() {
           <Layout className="app-main-layout">
             <Content className="app-content">
               <header className="app-toolbar">
-                <Button
-                  className="app-menu-button"
-                  aria-label="打开导航菜单"
-                  icon={<MenuOutlined />}
-                  onClick={() => setNavigationOpen(true)}
-                />
-                <Button aria-label="切换主题" icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />} onClick={toggle} />
+                <Tooltip title="打开导航菜单">
+                  <Button
+                    className="app-menu-button"
+                    aria-label="打开导航菜单"
+                    icon={<MenuOutlined />}
+                    onClick={() => setNavigationOpen(true)}
+                  />
+                </Tooltip>
+                <span className="app-toolbar-context" aria-live="polite">
+                  <span>SmartStrm</span>
+                  <strong>{currentNavigation.title}</strong>
+                </span>
+                <Tooltip title={mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'}>
+                  <Button
+                    aria-label="切换主题"
+                    icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+                    onClick={toggle}
+                  />
+                </Tooltip>
               </header>
               <main className="app-page-panel">
                 <Suspense fallback={<Spin size="large" tip="正在加载页面…" fullscreen />}>
@@ -119,13 +126,21 @@ export default function App() {
               </main>
             </Content>
             <Footer className="app-footer">
-              Copyright © 2025 SmartStrm Clean-room contributors ·{' '}
-              <Typography.Link href="https://github.com/sakuradairong/smartstrm-cleanroom" target="_blank" rel="noopener noreferrer">
-                获取对应源码
-              </Typography.Link>{' · '}
-              <Typography.Link href="https://github.com/sakuradairong/smartstrm-cleanroom/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
-                AGPL-3.0-only
-              </Typography.Link>{' · 本程序不提供任何担保'}
+              <span>Copyright © 2025 SmartStrm Clean-room contributors</span>
+              <span aria-hidden="true"> · </span>
+              <span>
+                <Typography.Link href="https://github.com/sakuradairong/smartstrm-cleanroom" target="_blank" rel="noopener noreferrer">
+                  获取对应源码
+                </Typography.Link>
+              </span>
+              <span aria-hidden="true"> · </span>
+              <span>
+                <Typography.Link href="https://github.com/sakuradairong/smartstrm-cleanroom/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
+                  AGPL-3.0-only
+                </Typography.Link>
+              </span>
+              <span aria-hidden="true"> · </span>
+              <span>本程序不提供任何担保</span>
             </Footer>
           </Layout>
           <Drawer

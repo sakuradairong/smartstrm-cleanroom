@@ -2,6 +2,8 @@
 
 本矩阵基于公开文档（`smartstrm.github.io`）和当前仓库实现维护。`✅` 表示已有自动化或运行证据，`🟡` 表示部分实现，`⬜` 表示尚未实现。功能只有在真实协议或可复现实验服务验证后才能标记为 `✅`。
 
+运行边界：生成、附属文件复制、同步清理、内容替换及本地 Rename/Move 的安全文件操作目前只支持 Linux；其他系统返回不支持错误。任务输出必须独占且不与任何 Local 根重叠。目录句柄竞态测试覆盖生成写入、清理和改名；ffmpeg 封面工具尚未完成同等目录句柄重构，现有静态符号链接测试不证明对抗并发父目录替换的能力。
+
 ## 存储与文件管理
 
 | 功能 | 状态 | 当前证据 / 剩余工作 |
@@ -39,7 +41,7 @@
 | 任务状态低开销轮询 | ✅ | 移除重复固定心跳，改为不可重入的单一 `setTimeout` 循环；页面隐藏暂停、恢复可见立即刷新，并有渲染脚本、竞态、容器和 Chrome 请求计数验证 |
 | 停止运行中任务 | ✅ | 运行级 context、管理 API/UI 与队列隔离竞态测试 |
 | 目录时间检查 | ✅ | 远端目录时间与本地生成目录时间比较、无时间自动回退及 Webhook 覆盖测试 |
-| 工具箱：内容替换、全量覆写、清除 | ✅ | 非根/非符号链接约束、内容替换预览、运行互斥、API/UI 与测试 |
+| 工具箱：内容替换、全量覆写、清除 | ✅ | 非根/非符号链接约束、内容替换预览、运行互斥、API/UI 与测试；清除前通过 no-store `GET /api/tasks/{id}/generated` 展示扫描/计划/保留计数，React UI 仅在预览后显示二次确认；DELETE 会独立重新读取并验证当前每个 STRM，已不满足归属条件的文件会保留，但预览不是锁定计划，执行时计数可能变化；API 选择性删除、竞态测试及真实 Chrome 桌面/手机明暗主题网络与截图验证覆盖；未实现完整输出清单和自动同步删除上限 |
 | STRM URL 生成预览 | ✅ | 复用实际插件、目标命名、File ID、HMAC 和内容替换逻辑；React UI 显式要求任务存储中的具体源文件路径并保留失败草稿；只返回任务内相对目标，无写入/改名/同步删除副作用；API/UI/竞态/隔离容器/真实 Chrome 验证 |
 | 存储浏览运行当前目录 | ✅ | 认证匹配 API 复用 `Manager.MatchTasks` 的存储/路径边界和最具体任务排序；UI 仅在匹配时显示，防陈旧导航并传递当前目录；竞态、容器、历史和 Chrome 验证 |
 | URL 编码与 HMAC 安全签名 | ✅ | QueryEscape 与 `internal/signature` 测试；字面 `%`、`%23`、`%2F` 文件名的生成/API/播放保持一次解码，少编码一层时 HMAC 拒绝，并有竞态和容器 E2E |
@@ -55,7 +57,7 @@
 | 网页转存事件 | ✅ | 按官方链接用户脚本 v1.2 的 `event=web_save`、`driver=cloud189/quark/open115`、`savepath`、`delay` 实现；最长任务匹配、同级歧义拒绝、OpenList 强刷、响应契约、签名 STRM/302 与历史均有协议/竞态/容器 E2E |
 | CloudDrive2 | ✅ | 文档 `file_notify` 负载、最长存储/子路径映射、目录归一化、任务匹配与去重测试 |
 | MoviePilot | ✅ | 官方 `transfer.complete` 负载、`target_diritem.path`/`file_list_new`、最长路径映射和任务匹配测试 |
-| Token 重置 | ✅ | 32 字节 CSPRNG、一次性 no-store 响应、原子配置更新、UI 和 API 测试 |
+| Token 重置 | ✅ | 32 字节 CSPRNG、一次性 no-store 响应、原子配置更新、UI 和 API 测试；设置 WEBHOOK_TOKEN 时拒绝页面重置，普通配置保存保留环境值且不将其写盘 |
 
 ## 插件、识别与代理
 
@@ -69,7 +71,7 @@
 | 飞牛影视刷新 | ⬜ | API 配置、库匹配、HTTPS/自签支持待实现 |
 | 提取视频封面 | ✅ | 同源签名 STRM 校验、固定 ffmpeg 参数/协议白名单、超时取消、原子 JPG、符号链接防护、预览/API/UI 与假 ffmpeg 协议测试 |
 | TMDB 识别与模板 | 🟡 | API/代理、TTL 缓存、搜索、详情、剧集标题、`{title_original}`（movie `original_title`/TV `original_name`，空值回退显示标题）、模板变量提示与同源受限海报代理已实现；隔离协议服务 + 真实 Chrome 完成 movie/TV 搜索 prompt、年份、海报卡片、选择、模板、preview confirm、apply、目录刷新，以及 TV 集标题和空原始标题回退，网络均 200、console/page errors 为空，截图见 `artifacts/ui/tmdb-{movie,tv,fallback}-{results,applied}.png`；缺失 Key 时存储页主动提示且在 prompt 前中止，启动仅注入布尔状态不暴露 Key；真实 TMDB Key/实网限流和地区返回验证仍待完成 |
-| 本地/WebDAV 安全流代理 | ✅ | Range、Basic Auth 不泄露和协议测试 |
+| 本地/WebDAV 安全流代理 | ✅ | Range、Basic Auth 不泄露和协议测试；WebDAV 元数据总超时与无整段总超时的媒体流分离，回归覆盖长流、截断中止和客户端取消 |
 | OpenList 302 | ✅ | raw URL 校验与重定向测试 |
 | Emby/Jellyfin/Plex/飞牛全站 302 代理 | 🟡 | 独立端口、固定上游、安全透传、流式响应、WebSocket、重定向回写和优雅关闭已完成；Emby/Jellyfin PlaybackInfo 已按公开协议做同源 HMAC STRM 改写，并通过 mock、竞态及容器到 OpenList 302 链路；启用/停用、上游、服务器类型和改写开关已支持不重启热生效（仅监听端口因容器端口映射固定而仍需重启），已在真实容器上验证端口启停与容器未重启；改写已对照 Jellyfin 公开源码固化一致性测试（`DirectStreamUrl`/`AddApiKeyToDirectStreamUrl` 为 Emby 特有，Jellyfin 客户端经 `MediaSource.Path` 直连，GET/POST 两条路由及反代 base path 均覆盖）；真实客户端及 Plex/飞牛改写待完成 |
 | 首播优化、外部播放器、隐藏推广 | ⬜ | 各媒体服务器兼容实现和浏览器验证待完成 |
@@ -83,6 +85,7 @@
 | 任务与存储浏览 UI | ✅ | React SPA（Vite + antd）覆盖仪表盘、任务/工具、存储、实时日志与配置；单测、竞态、隔离 Docker、真实 Chrome 逐页交互、主题刷新持久化和 720px Sider 折叠均通过，且 console/page errors/网络失败为空 |
 | Docker/Compose、健康检查、资源限制 | ✅ | 构建、Compose 校验和公网健康检查 |
 | 配置持久化、备份与迁移 | ✅ | schema v1、旧配置自动迁移、未来版本拒绝、严格校验、0600 原子写、备份恢复、脱敏 API/UI 测试 |
+| 配置热更新交接 | ✅ | 运行中、排队、延迟及工具操作阻止交接；旧代冻结并取消后启动新代，代理 prepare/abort、失败历史目标保留、环境覆盖和跨代签名回归通过；外部编辑忙时保留旧运行态并重试 |
 | 日志、运行历史与实时日志 | ✅ | 0600 有界 JSONL、启动恢复、任务生命周期、敏感参数脱敏、筛选 API、SSE 有界订阅；前端按动画帧批量去重渲染且 pending/已显示记录各限制 200 条，避免突发日志逐条重建 DOM |
 
 ## 完成规则

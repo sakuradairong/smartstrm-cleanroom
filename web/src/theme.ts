@@ -1,25 +1,58 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ThemeConfig } from 'antd'
 import { theme as antdTheme } from 'antd'
 
 export type ThemeMode = 'dark' | 'light'
+export type ThemePreference = 'system' | ThemeMode
 
 const STORAGE_KEY = 'smartstrm.theme'
+const SYSTEM_QUERY = '(prefers-color-scheme: dark)'
 
-function readInitial(): ThemeMode {
-  return localStorage.getItem(STORAGE_KEY) === 'light' ? 'light' : 'dark'
+function readInitial(): ThemePreference {
+  try {
+    if (typeof localStorage === 'undefined') return 'system'
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored === 'light' || stored === 'dark' ? stored : 'system'
+  } catch (error) {
+    if (error instanceof DOMException || error instanceof ReferenceError) return 'system'
+    throw error
+  }
 }
 
-export function useTheme(): { mode: ThemeMode; toggle: () => void } {
-  const [mode, setMode] = useState<ThemeMode>(readInitial)
-  const toggle = useCallback(() => {
-    setMode(current => {
-      const next = current === 'dark' ? 'light' : 'dark'
-      localStorage.setItem(STORAGE_KEY, next)
-      return next
-    })
+export function useTheme(): {
+  readonly preference: ThemePreference
+  readonly mode: ThemeMode
+  readonly setPreference: (preference: ThemePreference) => void
+} {
+  const [preference, updatePreference] = useState<ThemePreference>(readInitial)
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(SYSTEM_QUERY).matches
+      : false,
+  )
+
+  useEffect(() => {
+    if (preference !== 'system' || typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia(SYSTEM_QUERY)
+    setSystemDark(media.matches)
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [preference])
+
+  const setPreference = useCallback((next: ThemePreference) => {
+    updatePreference(next)
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, next)
+    } catch (error) {
+      // Storage can be blocked by browser privacy settings; the in-memory
+      // preference still applies for this session.
+      if (!(error instanceof DOMException || error instanceof ReferenceError)) throw error
+    }
   }, [])
-  return { mode, toggle }
+
+  const mode = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference
+  return { preference, mode, setPreference }
 }
 
 export function getAntdThemeConfig(mode: ThemeMode): ThemeConfig {

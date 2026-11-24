@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router'
-import { App as AntApp, Button, ConfigProvider, Drawer, Layout, Menu, Spin, Tooltip, Typography } from 'antd'
+import { App as AntApp, Button, ConfigProvider, Drawer, Dropdown, Layout, Menu, Spin, Tooltip, Typography } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { DashboardOutlined, FolderOpenOutlined, GithubOutlined, HistoryOutlined, MenuOutlined, MoonOutlined, PlaySquareOutlined, SettingOutlined, SunOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { getAntdThemeConfig, useTheme } from './theme'
+import type { ThemePreference } from './theme'
 import './App.css'
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
@@ -13,6 +14,12 @@ const HistoryPage = lazy(() => import('./pages/HistoryPage'))
 const ConfigPage = lazy(() => import('./pages/ConfigPage'))
 
 const { Sider, Content, Footer } = Layout
+
+const THEME_OPTIONS = [
+  { key: 'system', label: '跟随系统', icon: <SettingOutlined /> },
+  { key: 'light', label: '浅色', icon: <SunOutlined /> },
+  { key: 'dark', label: '深色', icon: <MoonOutlined /> },
+] as const satisfies readonly { readonly key: ThemePreference; readonly label: string; readonly icon: React.ReactNode }[]
 
 const NAV_ITEMS = [
   { key: '/', title: '仪表盘', icon: <DashboardOutlined />, label: <NavLink to="/">仪表盘</NavLink> },
@@ -30,9 +37,11 @@ function selectedKey(pathname: string): string {
 }
 
 export default function App() {
-  const { mode, toggle } = useTheme()
+  const { mode, preference, setPreference } = useTheme()
   const location = useLocation()
   const [navigationOpen, setNavigationOpen] = useState(false)
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const themeOption = THEME_OPTIONS.find(option => option.key === preference) ?? THEME_OPTIONS[0]
   const themeConfig = useMemo(() => getAntdThemeConfig(mode), [mode])
   const currentNavigation = NAV_ITEMS.find(item => item.key === selectedKey(location.pathname)) ?? NAV_ITEMS[0]
   useEffect(() => setNavigationOpen(false), [location.pathname])
@@ -104,13 +113,34 @@ export default function App() {
                   <span>SmartStrm</span>
                   <strong>{currentNavigation.title}</strong>
                 </span>
-                <Tooltip title={mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'}>
-                  <Button
-                    aria-label="切换主题"
-                    icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                    onClick={toggle}
-                  />
-                </Tooltip>
+                <Dropdown
+                  trigger={['click']}
+                  open={themeMenuOpen}
+                  onOpenChange={setThemeMenuOpen}
+                  menu={{
+                    'aria-label': '主题偏好',
+                    selectable: true,
+                    selectedKeys: [preference],
+                    items: THEME_OPTIONS.map(option => ({
+                      ...option,
+                      role: 'menuitemradio',
+                      'aria-checked': option.key === preference,
+                    })),
+                    onClick: ({ key }) => {
+                      const option = THEME_OPTIONS.find(item => item.key === key)
+                      if (option) setPreference(option.key)
+                    },
+                  }}
+                >
+                  <Tooltip title={`主题：${themeOption.label}`}>
+                    <Button
+                      aria-label={`切换主题，当前：${themeOption.label}`}
+                      aria-haspopup="menu"
+                      aria-expanded={themeMenuOpen}
+                      icon={themeOption.icon}
+                    />
+                  </Tooltip>
+                </Dropdown>
               </header>
               <main className="app-page-panel">
                 <Suspense fallback={<Spin size="large" tip="正在加载页面…" fullscreen />}>

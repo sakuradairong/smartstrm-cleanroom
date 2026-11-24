@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { App, Badge, Button, Empty, Input, Modal, Space, Table, Typography } from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
+import { Alert, App, Badge, Button, Empty, Input, Modal, Space, Table, Typography } from 'antd'
 import type { TableProps } from 'antd'
 import { useNavigate } from 'react-router'
 import { getJSON, postJSON } from '../api/client'
 import type { TaskConfig, TaskResult, TaskStatus, TasksResponse } from '../api/types'
 import { usePolling } from '../hooks/usePolling'
 import TaskToolsModal from './TaskToolsModal'
+import { TaskPageActions } from './TaskPageActions'
+import { describeTaskError } from './taskError'
 
 function statusOf(statuses: TaskStatus[], taskId: string): TaskStatus | undefined {
   return statuses.find((s) => s.task_id === taskId)
@@ -30,9 +32,15 @@ function StatusBadge({ status }: { status?: TaskStatus }) {
 
 function ResultText({ result, error }: { result?: TaskResult; error?: string }) {
   const r = result ?? {}
+  const failure = error ? describeTaskError(error) : null
+
   return (
     <Space direction="vertical" size={0}>
-      {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
+      {failure ? (
+        <Typography.Text type="danger" data-error-kind={failure.kind}>
+          {failure.summary}
+        </Typography.Text>
+      ) : null}
       <span>
         <span className="management-nowrap">生成 {r.created || 0}</span>
         {' / '}
@@ -62,7 +70,8 @@ function RunTaskModal({ taskId, onClose, onRan }: { taskId: string | null; onClo
       onClose()
       await onRan()
     } catch (err) {
-      message.error((err as Error).message)
+      if (!(err instanceof Error)) throw err
+      message.error(err.message)
     } finally {
       setRunning(false)
     }
@@ -102,7 +111,8 @@ function StrmPreviewModal({ taskId, onClose }: { taskId: string | null; onClose:
       const query = new URLSearchParams({ path: sourcePath })
       setContent(await getJSON(`/api/tasks/${encodeURIComponent(taskId)}/preview?${query.toString()}`))
     } catch (err) {
-      message.error((err as Error).message)
+      if (!(err instanceof Error)) throw err
+      message.error(err.message)
     } finally {
       setLoading(false)
     }
@@ -147,12 +157,17 @@ export default function TasksPage() {
   const [previewTaskId, setPreviewTaskId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
 
   const load = async () => {
     try {
       setData(await getJSON<TasksResponse>('/api/tasks'))
+      setLoaded(true)
+      setLoadError('')
     } catch (err) {
-      message.error((err as Error).message)
+      if (!(err instanceof Error)) throw err
+      setLoadError(err.message)
     }
   }
   usePolling(load, 3000)
@@ -180,7 +195,8 @@ export default function TasksPage() {
       await postJSON(`/api/tasks/${taskId}/stop`, {})
       await load()
     } catch (err) {
-      message.error((err as Error).message)
+      if (!(err instanceof Error)) throw err
+      message.error(err.message)
     } finally {
       setActionLoading(null)
     }
@@ -191,12 +207,20 @@ export default function TasksPage() {
       title: '任务',
       key: 'name',
       width: 140,
-      render: (_, task) => (
-        <>
-          <div>{task.name || task.id}</div>
-          <Typography.Text type="secondary">{task.id}</Typography.Text>
-        </>
-      ),
+      render: (_, task) => {
+        const status = statusOf(data.statuses, task.id)
+        return (
+          <>
+            <div>{task.name || task.id}</div>
+            <Typography.Text type="secondary">{task.id}</Typography.Text>
+            <div className="task-mobile-summary" role="group" aria-label={`${task.name || task.id}运行摘要`}>
+              <StatusBadge status={status} />
+              <ResultText result={status?.result} error={status?.error} />
+              <Button onClick={() => navigate(`/history?task_id=${encodeURIComponent(task.id)}`)}>查看日志</Button>
+            </div>
+          </>
+        )
+      },
     },
     {
       title: '存储·源路径',
@@ -246,11 +270,11 @@ export default function TasksPage() {
           )
         }
         return (
-          <Space size={4} wrap>
+          <Space className="task-row-actions" size={8} wrap>
             <Button onClick={() => setRunTaskId(task.id)}>运行</Button>
             <Button onClick={() => setPreviewTaskId(task.id)}>预览</Button>
             {statusOf(data.statuses, task.id)?.error ? (
-              <Button onClick={() => navigate(`/history?task_id=${encodeURIComponent(task.id)}`)}>查看日志</Button>
+              <Button className="task-desktop-log" onClick={() => navigate(`/history?task_id=${encodeURIComponent(task.id)}`)}>查看日志</Button>
             ) : null}
             <Button type="text" onClick={() => setToolsTaskId(task.id)}>工具</Button>
           </Space>
@@ -268,45 +292,57 @@ export default function TasksPage() {
             在这里查看运行状态并手动触发；添加或调整任务后会立即动态生效。
           </Typography.Text>
         </div>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate('/config?section=tasks&action=add-task')}
-        >
-          添加任务
-        </Button>
+        <TaskPageActions ready={loaded} hasTasks={data.tasks.length > 0} onRan={load} />
       </header>
-      <Space className="management-toolbar" wrap>
-        <Input.Search
-          className="management-search"
-          aria-label="筛选任务"
-          allowClear
-          placeholder="筛选任务"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+      {loadError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="任务加载失败"
+          description={loadError}
+          action={<Button loading={refreshing} onClick={() => void refresh()}>
+            {refreshing ? '重试中…' : '重试'}
+          </Button>}
         />
-        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refresh()}>
-          刷新
-        </Button>
-        <Typography.Text type="secondary" aria-live="polite">
-          显示 {visibleTasks.length} / {data.tasks.length} 个任务
-        </Typography.Text>
-      </Space>
-      <Table<TaskConfig>
-        rowKey="id"
-        pagination={false}
-        columns={columns}
-        dataSource={visibleTasks}
-        locale={{
-          emptyText: filter.trim()
-            ? <Empty description="没有匹配的任务" />
-            : (
-              <Empty description="还没有任务。任务用于扫描媒体并生成 STRM 文件。">
-                <Button type="primary" onClick={() => navigate('/config?section=tasks&action=add-task')}>创建第一个任务</Button>
-              </Empty>
-            ),
-        }}
-      />
+      ) : null}
+      {!loaded && !loadError ? <div role="status">正在加载任务…</div> : null}
+      {loaded ? (
+        <>
+          <Space className="management-toolbar" wrap>
+            <div className="task-filter">
+              <label htmlFor="task-filter">筛选任务</label>
+              <Input.Search
+                id="task-filter"
+                className="management-search"
+                aria-label="筛选任务"
+                allowClear
+                placeholder="按名称、ID、存储或源路径筛选"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+            </div>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refresh()}>
+              {refreshing ? '刷新中…' : '刷新'}
+            </Button>
+            <Typography.Text type="secondary" aria-live="polite">
+              显示 {visibleTasks.length} / {data.tasks.length} 个任务
+            </Typography.Text>
+          </Space>
+          <Table<TaskConfig>
+            rowKey="id"
+            pagination={false}
+            columns={columns}
+            dataSource={visibleTasks}
+            locale={{
+              emptyText: filter.trim()
+                ? <Empty description="没有匹配的任务" />
+                : (
+                  <Empty description="还没有任务。任务用于扫描媒体并生成 STRM 文件。" />
+                ),
+            }}
+          />
+        </>
+      ) : null}
       <RunTaskModal
         key={`run:${runTaskId ?? 'closed'}`}
         taskId={runTaskId}

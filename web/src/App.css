@@ -47,6 +47,10 @@ body {
 	--app-shadow-lg: 0 22px 52px -32px rgb(15 23 42 / 28%);
 	--app-radius: 10px;
 	--app-radius-lg: 12px;
+	--app-space-sm: 8px;
+	--app-font-body-mobile: 17px;
+	--app-font-label: 14px;
+	--app-touch-target: 44px;
 
 	min-height: 100vh;
 	color: var(--app-text);
@@ -394,6 +398,22 @@ body {
 	white-space: nowrap;
 }
 
+.task-page-actions,
+.task-filter {
+	display: flex;
+	flex-direction: column;
+	gap: var(--app-space-sm);
+}
+
+.task-page-actions {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.task-mobile-summary {
+	display: none;
+}
+
 .connection-state {
 	display: inline-flex;
 	align-items: center;
@@ -666,6 +686,15 @@ body {
 }
 
 @media (max-width: 767px) {
+	.app-sider {
+		display: none !important;
+	}
+
+	.app-main-layout {
+		width: 100%;
+		min-width: 0;
+	}
+
 	.app-content {
 		padding: 12px;
 	}
@@ -793,6 +822,45 @@ body {
 }
 
 @media (max-width: 480px) {
+	.tasks-page {
+		font-size: var(--app-font-body-mobile);
+	}
+
+	.tasks-page .ant-typography,
+	.tasks-page .ant-badge-status-text,
+	.tasks-page .ant-input,
+	.tasks-page .ant-btn,
+	.tasks-page .ant-table {
+		font-size: var(--app-font-body-mobile);
+	}
+
+	.tasks-page .ant-table-thead > tr > th,
+	.tasks-page .task-filter label {
+		font-size: var(--app-font-label);
+	}
+
+	.tasks-page .ant-table-tbody > tr > td {
+		overflow-wrap: anywhere;
+	}
+
+	.tasks-page .ant-table-tbody .ant-btn {
+		height: var(--app-touch-target) !important;
+		min-height: var(--app-touch-target) !important;
+		font-size: var(--app-font-body-mobile) !important;
+	}
+
+	.tasks-page .task-desktop-log {
+		display: none;
+	}
+
+	.task-mobile-summary {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--app-space-sm);
+		margin-top: var(--app-space-sm);
+	}
+
 	.tasks-page col:nth-child(2),
 	.tasks-page col:nth-child(3),
 	.tasks-page col:nth-child(4),
@@ -813,8 +881,7 @@ body {
 	.app-shell *,
 	.app-shell *::before,
 	.app-shell *::after {
-		transition-duration: 0.01ms !important;
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
+		transition-property: opacity, color, background-color, border-color, box-shadow !important;
+		scroll-behavior: auto !important;
 	}
 }

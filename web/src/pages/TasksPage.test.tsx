@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router'
 import { App as AntApp } from 'antd'
@@ -90,32 +90,162 @@ test('渲染任务行与状态徽标', async () => {
   expect(screen.getByText('t1')).toBeInTheDocument()
   expect(screen.getByText('local')).toBeInTheDocument()
   expect(screen.getByText('/movies')).toBeInTheDocument()
-  expect(screen.getByText('空闲')).toBeInTheDocument()
-  expect(screen.getByText('生成 1')).toBeInTheDocument()
-  expect(screen.getByText('复制 2')).toBeInTheDocument()
+  expect(screen.getAllByText('空闲')).toHaveLength(2)
+  expect(screen.getAllByText('生成 1')).toHaveLength(2)
+  expect(screen.getAllByText('复制 2')).toHaveLength(2)
   expect(screen.getAllByText('跳过 0').length).toBeGreaterThan(0)
-  expect(screen.getByText('删除 3')).toBeInTheDocument()
+  expect(screen.getAllByText('删除 3')).toHaveLength(2)
   expect(screen.getAllByText('失败 0').length).toBeGreaterThan(0)
   expect(screen.getByText('剧集')).toBeInTheDocument()
-  expect(screen.getByText('运行中')).toBeInTheDocument()
-  expect(screen.getByText('队列 2')).toBeInTheDocument()
+  expect(screen.getAllByText('运行中')).toHaveLength(2)
+  expect(screen.getAllByText('队列 2')).toHaveLength(2)
   expect(screen.getByText(/添加或调整任务后会立即动态生效/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /添加任务/ })).toBeInTheDocument()
   expect(screen.getAllByText('0 */6 * * *')).toHaveLength(2)
-  expect(screen.getAllByRole('button', { name: /运\s*行/ })[0]).toHaveClass('ant-btn-default')
+  expect(screen.getAllByRole('button', { name: /^运\s*行$/ })[0]).toHaveClass('ant-btn-default')
   expect(screen.getAllByRole('button', { name: /工\s*具/ })[0]).toHaveClass('ant-btn-text')
   expect(screen.getByText('显示 2 / 2 个任务')).toBeInTheDocument()
 })
 
-test('添加任务入口跳转到配置页并请求打开新增表单', async () => {
-  stubFetch((url) => {
+test('没有任务时禁用运行全部并突出添加任务入口', async () => {
+  const fetchMock = stubFetch((url) => {
     if (url === '/api/tasks') return { body: { tasks: [], statuses: [] } }
     throw new Error('unexpected fetch: ' + url)
   })
   const user = userEvent.setup()
   renderPage()
-  await user.click(await screen.findByRole('button', { name: /添加任务/ }))
+  expect(await screen.findByText('还没有任务。任务用于扫描媒体并生成 STRM 文件。')).toBeInTheDocument()
+  const runAll = screen.getByRole('button', { name: /运行全部/ })
+  expect(runAll).toBeDisabled()
+  expect(runAll).toHaveClass('ant-btn-default')
+  const addTask = screen.getByRole('button', { name: /添加任务/ })
+  expect(addTask).toHaveClass('ant-btn-primary')
+  expect(document.querySelectorAll('.tasks-page .ant-btn-primary')).toHaveLength(1)
+  expect(screen.queryByRole('button', { name: '创建第一个任务' })).not.toBeInTheDocument()
+  await user.click(runAll)
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+  await user.click(addTask)
   expect(screen.getByTestId('location')).toHaveTextContent('/config?section=tasks&action=add-task')
+})
+
+test('运行全部原子提交任务并在请求期间防重，成功后刷新状态', async () => {
+  const tasks = [makeTask(), makeTask({ id: 't2', name: '剧集' })]
+  let queued = false
+  let releaseRun: () => void = () => {}
+  const fetchMock = stubFetch((url, init) => {
+    if (url === '/api/tasks') {
+      return { body: { tasks, statuses: [makeStatus({ queued: queued ? 1 : 0 })] } }
+    }
+    if (url === '/api/tasks/run-all' && init?.method === 'POST') {
+      return new Promise<FetchResult>((resolve) => {
+        releaseRun = () => {
+          queued = true
+          resolve({ body: { status: 'queued', tasks: ['t1', 't2'] } })
+        }
+      })
+    }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  const user = userEvent.setup()
+  renderPage()
+  expect(await screen.findByText('电影')).toBeInTheDocument()
+  const runAll = screen.getByRole('button', { name: /运行全部/ })
+  expect(runAll).toHaveClass('ant-btn-primary')
+  expect(screen.getByRole('button', { name: /添加任务/ })).toHaveClass('ant-btn-default')
+  await user.click(runAll)
+  await waitFor(() => expect(runAll).toHaveClass('ant-btn-loading'))
+  expect(runAll).toHaveTextContent('正在加入队列')
+  await user.click(runAll)
+  const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+  expect(posts).toHaveLength(1)
+  expect(posts[0]).toEqual([
+    '/api/tasks/run-all',
+    expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+  ])
+  releaseRun()
+  expect(await screen.findByText('已将 2 个任务加入队列')).toBeInTheDocument()
+  expect(await screen.findAllByText('队列 1')).toHaveLength(2)
+  await waitFor(() => expect(runAll).not.toHaveClass('ant-btn-loading'))
+})
+
+test('运行全部失败在操作旁保留错误，成功重试后清除', async () => {
+  let fail = true
+  stubFetch((url) => {
+    if (url === '/api/tasks') return { body: { tasks: [makeTask()], statuses: [] } }
+    if (url === '/api/tasks/run-all') return fail
+      ? { status: 409, body: { error: '任务队列不可用' } }
+      : { body: { status: 'queued', tasks: ['t1'] } }
+    throw new Error('unexpected fetch: ' + url)
+  })
+  const user = userEvent.setup()
+  renderPage()
+  expect(await screen.findByText('电影')).toBeInTheDocument()
+  const runAll = screen.getByRole('button', { name: /运行全部/ })
+  await user.click(runAll)
+  const error = await screen.findByRole('alert')
+  expect(error).toHaveTextContent('任务队列不可用')
+  expect(error.closest('.task-page-actions')).toContainElement(runAll)
+  expect(screen.getAllByText('任务队列不可用')).toHaveLength(1)
+  expect(screen.queryByText(/已将 .* 个任务加入队列/)).not.toBeInTheDocument()
+  await waitFor(() => expect(runAll).not.toHaveClass('ant-btn-loading'))
+  expect(runAll).toBeEnabled()
+  fail = false
+  await user.click(runAll)
+  expect(await screen.findByText('已将 1 个任务加入队列')).toBeInTheDocument()
+  expect(screen.queryByText('任务队列不可用')).not.toBeInTheDocument()
+})
+
+test('初次加载时显示加载状态而不是空配置', async () => {
+  let resolveLoad: (value: FetchResult) => void = () => {}
+  stubFetch(() => new Promise<FetchResult>((resolve) => { resolveLoad = resolve }))
+  renderPage()
+  expect(within(document.querySelector('.tasks-page') ?? document.body).getByRole('status')).toHaveTextContent('正在加载任务')
+  expect(screen.queryByText(/还没有任务/)).not.toBeInTheDocument()
+  expect(screen.queryByText('显示 0 / 0 个任务')).not.toBeInTheDocument()
+  expect(document.querySelectorAll('.tasks-page .ant-btn-primary')).toHaveLength(0)
+  await act(async () => { resolveLoad({ body: { tasks: [], statuses: [] } }) })
+  expect(await screen.findByText(/还没有任务/)).toBeInTheDocument()
+  expect(screen.queryByText('正在加载任务')).not.toBeInTheDocument()
+})
+
+test('初次加载失败保留错误和重试入口，重试成功后显示任务', async () => {
+  let fail = true
+  stubFetch(() => fail
+    ? { status: 500, body: { error: '读取任务失败' } }
+    : { body: { tasks: [makeTask()], statuses: [] } })
+  const user = userEvent.setup()
+  renderPage()
+  expect(await screen.findByRole('alert')).toHaveTextContent('读取任务失败')
+  expect(screen.queryByText(/还没有任务/)).not.toBeInTheDocument()
+  expect(screen.queryByText('显示 0 / 0 个任务')).not.toBeInTheDocument()
+  expect(document.querySelectorAll('.tasks-page .ant-btn-primary')).toHaveLength(0)
+  fail = false
+  await user.click(screen.getByRole('button', { name: /重\s*试/ }))
+  expect(await screen.findByText('电影')).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('移动任务摘要包含状态、全部结果、错误及日志入口', async () => {
+  stubFetch(() => ({ body: {
+    tasks: [makeTask()],
+    statuses: [makeStatus({ error: 'list /movies: open /missing: no such file or directory', queued: 2,
+      result: { created: 1, copied: 2, skipped: 3, removed: 4, failed: 5 } })],
+  } }))
+  const user = userEvent.setup()
+  renderPage()
+  const summary = await screen.findByRole('group', { name: '电影运行摘要' })
+  expect(summary).toHaveClass('task-mobile-summary')
+  for (const text of ['失败', '队列 2', '生成 1', '复制 2', '跳过 3', '删除 4', '失败 5']) {
+    expect(within(summary).getByText(text)).toBeInTheDocument()
+  }
+  expect(summary.querySelector('[data-error-kind="source-unavailable"]')).toBeInTheDocument()
+  expect(within(summary).queryByText(/no such file or directory/i)).not.toBeInTheDocument()
+  await user.click(within(summary).getByRole('button', { name: '查看日志' }))
+  expect(screen.getByTestId('location')).toHaveTextContent('/history?task_id=t1')
 })
 
 test('可按名称、ID、存储或源路径筛选任务并清空筛选', async () => {
@@ -133,6 +263,8 @@ test('可按名称、ID、存储或源路径筛选任务并清空筛选', async 
   const user = userEvent.setup()
   renderPage()
   const filter = await screen.findByRole('searchbox', { name: '筛选任务' })
+  expect(screen.getByLabelText('筛选任务')).toBe(filter)
+  expect(filter).toHaveAttribute('placeholder', '按名称、ID、存储或源路径筛选')
   await user.type(filter, 'WEBDAV')
   expect(screen.getByText('动画')).toBeInTheDocument()
   expect(screen.queryByText('电影')).not.toBeInTheDocument()
@@ -173,7 +305,7 @@ test('点击运行调用 run 接口并显示成功消息', async () => {
   })
   const user = userEvent.setup()
   renderPage()
-  await user.click(await screen.findByRole('button', { name: /运\s*行/ }))
+  await user.click(await screen.findByRole('button', { name: /^运\s*行$/ }))
   const dialog = await screen.findByRole('dialog')
   const ok = within(dialog).getByRole('button', { name: /确\s*定/ })
   await user.click(ok)
@@ -201,7 +333,7 @@ test('运行中任务显示停止按钮', async () => {
   const user = userEvent.setup()
   renderPage()
   const stop = await screen.findByRole('button', { name: /停\s*止/ })
-  expect(screen.queryByRole('button', { name: /运\s*行/ })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /^运\s*行$/ })).not.toBeInTheDocument()
   await user.click(stop)
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(

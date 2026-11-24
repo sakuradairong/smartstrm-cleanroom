@@ -2,69 +2,43 @@
 
 # SmartStrm Clean-room
 
-用 Go 从零实现的 STRM 生成、任务自动化与安全播放服务。
+把网盘和本地目录里的媒体，变成 Emby、Jellyfin 能扫描、能播放的 STRM 库。
 
 [![CI](https://github.com/sakuradairong/smartstrm-cleanroom/actions/workflows/ci.yml/badge.svg)](https://github.com/sakuradairong/smartstrm-cleanroom/actions/workflows/ci.yml)
 [![Go 1.23](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go)](go.mod)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 
-[快速开始](#快速开始) · [功能状态](docs/FEATURE_MATRIX.md) · [配置示例](config.example.json) · [参与贡献](CONTRIBUTING.md) · [安全策略](SECURITY.md)
+[它做什么](#它做什么) · [快速开始](#快速开始) · [现在做到哪一步](#现在做到哪一步) · [配置](#配置) · [安全](#安全)
 
 </div>
 
 > [!IMPORTANT]
-> **这是独立的 clean-room 实现。** 本仓库依据公开功能说明和公开协议从零编写，不包含原闭源 SmartStrm 的私有源码，不绕过许可证，也不调用未经授权的私有 API。项目名称仅用于说明兼容目标；本项目不代表原项目作者或其商业版本。
+> **这是独立的 clean-room 实现。** 本仓库依据公开功能说明和公开协议从零编写，不包含原闭源 SmartStrm 的私有源码，不绕过许可证，也不调用未经授权的私有 API。项目名称只说明兼容目标。本项目不代表原项目作者或其商业版本。
 
-## 项目状态
+## 它做什么
 
-当前版本已经具备可部署的核心链路：读取存储、生成和维护 STRM、调度任务、接收 Webhook、通过签名地址播放，以及使用管理页面执行常用操作。
+媒体服务器认的是本地文件。网盘里的片子通常不能直接放进媒体库。SmartStrm 站在中间：扫描一份存储，为每个媒体文件写一条 `.strm`，里面是带签名的播放地址。Emby 或 Jellyfin 扫描这些 STRM；播放时请求回到本服务，再转到 Local、WebDAV 或 OpenList 上的原文件。
 
-并非所有原版公开功能都已完成。原生国内云盘、特定媒体服务器深度改写和真实第三方服务兼容性需要官方文档、测试账号或固定版本实验环境；未经验证的能力不会标记为完成。
+一次完整使用是这条链路：
 
-- 逐项实现与验证结果：[`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)
-- 外部验证条件与阻塞项：[`docs/EXTERNAL_VALIDATION.md`](docs/EXTERNAL_VALIDATION.md)
-- 上游公开版本差异参考：[`docs/UPSTREAM_RELEASE_NOTES.md`](docs/UPSTREAM_RELEASE_NOTES.md)
+```text
+存储里的媒体
+    │  任务扫描、过滤、写出 .strm
+    ▼
+本地 STRM 目录  ←  Emby / Jellyfin 当普通媒体库扫描
+    │  播放
+    ▼
+签名地址回到 SmartStrm，再转到源文件
+```
 
-## 主要能力
+管理界面有五个页面：仪表盘看运行概况，任务里运行、停止、预览和清理，存储浏览里管理文件，运行日志看历史和实时事件，配置里添加存储和任务。服务是一个 Go 进程，前端构建后嵌进二进制。
 
-### 存储与文件操作
-
-- Local、WebDAV、OpenList、123 云盘官方开发者 API，以及只读 ANi Open RSS/XML 驱动
-- `123_open` 使用 123 云盘官方开放平台；`quark`、`115`、`189`、`123` 仍是 OpenList 适配器别名，已有配置不会自动切换协议
-- 存储浏览、筛选、自然排序、新建目录、重命名、移动和删除
-- OpenList 显式分页、WebDAV 规范化 PROPFIND、元数据响应硬上限和严格 JSON/XML 解码
-- 本地根目录和符号链接边界保护；远端错误、直链和响应头脱敏
-
-### STRM 与任务自动化
-
-- 递归生成、增量运行、附属文件复制和可选同步删除
-- 媒体扩展名、大小范围、保留规则和任务级插件
-- 标准五段 Crontab、本地目录监听、串行队列、停止与重新运行
-- 单条条目失败时继续处理兄弟条目；部分失败会跳过同步删除
-- 真实输出预览，不写文件、不修改远端
-
-### Webhook 与媒体联动
-
-- 通用任务 Webhook、QAS/CloudSaver `a_task`、`cs_strm` 和 `web_save`
-- Emby 删除事件同步删除源文件
-- CloudDrive2 与 MoviePilot 的公开负载映射基础
-- HMAC 签名播放地址，Local/WebDAV Range 流与 OpenList 302
-- Emby/Jellyfin `PlaybackInfo` 公开协议改写基础；真实客户端兼容状态以功能矩阵为准
-
-### 管理与命名
-
-- Basic Auth 管理 UI 和 API
-- 任务状态、实时历史 SSE、配置保存/恢复与敏感字段脱敏
-- 正则、顺序、魔法变量和 TMDB movie/TV 批量命名
-- TMDB 海报代理、剧集标题、`{title_original}` 和空原始标题回退
-- ffmpeg 视频封面提取、预览和超时控制
+生成、复制附属文件、同步清理、内容替换，以及本地改名和移动，使用 Linux 目录句柄。其他系统会返回不支持。请用本仓库的 Linux 容器跑这些操作。`go run` 在 Windows 或 macOS 上可以打开管理页，不能当作生成和改名的运行环境。
 
 ## 快速开始
 
-### Docker Compose（推荐）
-
-要求：Docker Engine 和 Docker Compose v2。
+要求 Docker Engine 和 Docker Compose v2。
 
 ```bash
 git clone https://github.com/sakuradairong/smartstrm-cleanroom.git
@@ -72,35 +46,38 @@ cd smartstrm-cleanroom
 
 mkdir -p runtime/config runtime/media runtime/strm
 cp config.example.json runtime/config/config.json
-
-# 只需修改 public_url、管理员口令和 Webhook Token。
-${EDITOR:-vi} runtime/config/config.json
-
-# 容器使用 UID/GID 10001，需要能够原子更新配置和历史文件。
-chmod 600 runtime/config/config.json
-sudo chown -R 10001:10001 runtime/config runtime/media runtime/strm
-
-docker compose up -d --build
-docker compose ps
 ```
 
-管理页面默认位于 `http://localhost:8024`。首次登录后进入“配置”页添加存储和生成任务，验证保存后执行 `docker compose restart smartstrm`。`8097` 是可选媒体代理端口；只有通过 WebUI 配置并重启后才会监听。
+编辑 `runtime/config/config.json` 里这几项：
 
-健康检查：
+| 字段 | 填什么 |
+| --- | --- |
+| `public_url` | 媒体服务器访问得到的地址，例如 `http://192.168.1.10:8024`。STRM 里的播放地址用它拼出来 |
+| `admin.username` / `admin.password` | 管理页的 Basic Auth。用户名为空时管理接口不校验身份 |
+| `webhook_token` | 长随机值，同时是 Webhook 鉴权密钥和播放签名密钥 |
 
 ```bash
+openssl rand -hex 32
+
+chmod 600 runtime/config/config.json
+# 容器进程是 UID 10001（Compose 写为 10001:0）。目录要让这个用户可写。
+sudo chown -R 10001 runtime/config runtime/media runtime/strm
+
+docker compose up -d --build
 curl --fail http://localhost:8024/health
 ```
 
-停止服务：
+打开 `http://localhost:8024`，在「配置」里添加存储和生成任务，然后点「应用所有修改」。存储、任务、TMDB、历史，以及媒体代理的启用、上游、服务器类型和 PlaybackInfo 改写会立刻生效。管理监听地址 `listen`、管理员账号，以及媒体代理已经在听时再改端口，要重启进程后才切换。
+
+Compose 已经把宿主机的 `8024` 和 `8097` 映射进容器。第一次启用代理并把监听填成 `:8097`，保存后就会开始监听；代理没启用时，`8097` 上没有进程。健康检查只覆盖 `8024`。
+
+有任务正在运行、排队、延迟，或任务工具还在操作时，页面保存会被拒绝，原配置保持有效。等这些操作结束后再保存。直接改配置文件则会等到可以应用时自动重试。
 
 ```bash
 docker compose down
 ```
 
-### 直接运行
-
-要求：Go 1.23；使用封面提取功能时还需 `ffmpeg`。
+不使用容器时，在 Linux 上：
 
 ```bash
 cp config.example.json config.json
@@ -108,40 +85,21 @@ chmod 600 config.json
 go run ./cmd/smartstrm -config config.json
 ```
 
+配置路径也可以用环境变量 `SMARTSTRM_CONFIG`。封面提取需要系统里有 `ffmpeg`；容器镜像已经带上。
+
 ## 配置
 
-[`config.example.json`](config.example.json) 只保留启动所需的基础字段。首次启动后，在管理 UI 的“配置”页添加存储、生成任务及其他业务能力；保存会严格校验整份候选配置并原子写回同一个 `0600` 文件。存储、任务、TMDB、历史和媒体代理设置支持热更新；管理监听地址、认证以及运行中的代理监听端口变更仍需重启。有运行中、排队、延迟任务或任务工具操作时，保存会被拒绝并保留原配置，待任务结束后重试；外部文件编辑则会持续重试应用。未知字段、错误类型、非法 URL、危险目录、无效 Cron 或不支持的能力都会阻止应用。
+[`config.example.json`](config.example.json) 只够把服务启动起来。存储、任务和高级能力在管理页里添加，保存时整份配置会严格校验，并以 `0600` 原子写回同一个文件。未知字段、错误类型、非法 URL、危险目录、无效 Cron 或不支持的驱动都会阻止应用。
 
-每个任务的输出目录必须独占：不同任务不能使用相同或互为祖先的输出目录，输出目录也不能与任何 Local 存储根目录重叠。校验会解析已有祖先目录中的符号链接；实际生成、复制、清理和本地改名使用 Linux 目录句柄操作，拒绝符号链接父目录及同名改名覆盖。这些安全文件操作目前要求 Linux；其他系统会返回不支持错误，推荐通过 Linux Docker 运行。
+`listen`、`public_url`、`admin`、`webhook_token` 不在业务设置里改，避免一次保存把管理入口改丢。存储口令、Token 和 TMDB Key 在页面上显示为 `********`；保留这个占位或留空，都会继续使用已有密钥。
 
-环境变量覆盖会在每次激活配置时重新应用，环境中的密钥不会写入配置或备份。设置 `WEBHOOK_TOKEN` 时，管理页重置 Token 会返回冲突；应修改部署环境并重启。
+环境变量 `PORT`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`WEBHOOK_TOKEN` 在每次激活配置时覆盖对应字段，并且不会写进配置文件或备份。设置了 `WEBHOOK_TOKEN` 时，页面上的「重置 Token」会返回冲突，应改部署环境后重启。更换签名密钥后，已生成的 STRM 需要重新生成。
 
-| 区域 | 用途 | 注意事项 |
-| --- | --- | --- |
-| `admin` | 管理 UI/API 的 Basic Auth | 必须更换示例密码 |
-| `webhook_token` | Webhook 鉴权和签名密钥 | 使用强随机值；更换后需重新生成 STRM |
-| WebUI `存储` | Local/WebDAV/OpenList/123 官方 API/ANi Open | 凭据经认证 API 写入 `0600` 配置；123 官方驱动的下载与播放需要对应开放平台权益和直链空间 |
-| WebUI `生成任务` | 源路径、目标、调度和插件 | `sync_delete` 有破坏性，首次运行保持关闭 |
-| WebUI `高级能力` | 历史、TMDB、媒体工具、媒体代理、联动和全局插件 | 复杂映射/插件只编辑对应 JSON 区块，不暴露整份原始配置 |
+每个任务的输出目录必须独占：不能与另一个任务的输出目录相同或互为祖先，也不能和任何 Local 存储根重叠。
 
-基础启动字段（`listen`、`public_url`、`admin`、`webhook_token`）不能通过业务设置 API 修改，避免错误操作导致管理入口失联。存储口令、Token 和 TMDB Key 在 WebUI 中显示为 `********`；保持该值或留空会保留已有密钥。完整持久化结构仍可通过认证后的 `GET /api/config` 查看脱敏结果，供备份和自动化使用。
+### 添加第一条任务
 
-### 123 云盘官方 API
-
-1. 前往 [123 云盘开放平台](https://www.123pan.com/developer) 创建开发者应用，取得 Client ID 和 Client Secret。
-2. 在 123 云盘中为计划挂载的子目录启用“直链空间”，并从目录 URL 获取 File ID。文件列表等基础能力可用时，不代表账号已具备下载/播放权益；直链通常需要相应 VIP/开放平台权限。
-3. 在 WebUI 的“配置 → 存储 → 添加存储”选择“123 云盘官方 API”，填写上述凭据和挂载目录 File ID；根目录 ID 为 `0`，但根目录本身不能提供直链。
-4. 保存后按页面提示重启服务。若任务要使用稳定 File ID STRM，启用任务的“文件 ID 模式”。
-
-原生驱动类型为 `123_open`。旧类型 `123` 继续表示 OpenList 适配器，不会在升级时静默改变认证方式。Client Secret 只在 `0600` 配置中持久化，管理 API 返回 `********`；编辑时保留该值或留空均不会清除真实密钥。
-
-建议生成随机 Token：
-
-```bash
-openssl rand -hex 32
-```
-
-### 最小任务示例
+在「配置 → 生成任务」里填写，或让自动化写入同等结构：
 
 ```json
 {
@@ -158,26 +116,46 @@ openssl rand -hex 32
 }
 ```
 
-## 常用 API
+`schedule` 是标准五段 Cron。本地存储还可以打开目录监听。增量运行只处理有变化的条目。单条失败会继续处理其余条目，并跳过这一轮同步删除。运行前可以预览将要写出的 STRM，预览不写文件、不改远端。
 
-以下示例不会把凭据写进 URL：
+`sync_delete` 首次保持关闭。它会删除输出目录里源端已经不存在的 `.strm` 和复制文件。
+
+### 存储怎么选
+
+| 类型 | 什么时候用 |
+| --- | --- |
+| `local` | 已经挂进本机或容器的目录。根必须是绝对路径，且不能是文件系统根 |
+| `webdav` | 标准 WebDAV。播放走 Range 代理 |
+| `openlist` | OpenList。播放返回经过校验的 302。`quark`、`115`、`189`、`123` 是这个驱动的别名 |
+| `123_open` | 123 云盘开放平台。和上面的 `123` 别名是两套凭据，升级不会自动改协议 |
+| `ani_open` | ANi Open 的只读 RSS/XML。不能改、不能删 |
+
+123 官方驱动：
+
+1. 在 [123 云盘开放平台](https://www.123pan.com/developer) 创建应用，取得 Client ID 和 Client Secret。
+2. 给要挂载的子目录打开直链空间，从目录 URL 取得 File ID。能列出文件，不表示账号已经有下载和播放权益。
+3. 在「配置 → 存储」选择「123 云盘官方 API」，填入凭据和挂载目录 File ID。根目录 ID 是 `0`，根目录本身不提供直链。
+4. 需要稳定 File ID STRM 时，打开任务的文件 ID 模式。
+
+Client Secret 只留在 `0600` 配置里。真实账号的下载、播放和限频仍待外部验证，见 [外部验证清单](docs/EXTERNAL_VALIDATION.md)。
+
+## 播放和外部触发
+
+管理 API 使用 Basic Auth。Webhook 接受查询参数 `token`、路径中的 token，或 `Authorization: Bearer`。带 token 的 URL 按秘密保管，不要放进 Issue、日志或截图。
 
 ```bash
 export SMARTSTRM_URL=http://localhost:8024
 export SMARTSTRM_ADMIN='admin:your-password'
 export SMARTSTRM_TOKEN='your-webhook-token'
 
-# 查看任务
 curl --user "$SMARTSTRM_ADMIN" "$SMARTSTRM_URL/api/tasks"
 
-# 运行任务的一个源目录
 curl --user "$SMARTSTRM_ADMIN" \
   --request POST \
   --header 'Content-Type: application/json' \
   --data '{"path":"/movies/2025"}' \
   "$SMARTSTRM_URL/api/tasks/movies/run"
 
-# 外部工具触发任务
 curl --request POST \
   --header "Authorization: Bearer $SMARTSTRM_TOKEN" \
   --header 'Content-Type: application/json' \
@@ -185,94 +163,80 @@ curl --request POST \
   "$SMARTSTRM_URL/webhook/run"
 ```
 
-Emby Webhook 地址：
+| 入口 | 用途 |
+| --- | --- |
+| `POST /webhook/run` | 通用任务触发，含公开的 `a_task` 负载 |
+| `POST /webhook/emby?token=…` | Emby 删除事件。确认后会删除对应源文件 |
+| `POST /webhook/{token}` | QAS / CloudSaver，以及 `event=web_save` 的网页转存 |
+| `POST /webhook/{token}/file_notify` | CloudDrive2 `file_notify` |
+| `POST /webhook/{token}/moviepilot` | MoviePilot `transfer.complete` |
 
-```text
-https://your-smartstrm.example/webhook/emby?token=YOUR_TOKEN
-```
+媒体代理监听独立端口，把固定上游的 Emby 或 Jellyfin 流量转过来，并可按公开协议改写 `PlaybackInfo` 里的同源签名 STRM。真实客户端的兼容范围以功能矩阵为准。
 
-将含 Token 的 URL 视为秘密，不要提交到 Issue、日志或截图。
+## 现在做到哪一步
 
-## 安全提示
+逐项证据在 [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)。没有真实协议或可复现实验的能力不会写成完成。
+
+| 状态 | 范围 |
+| --- | --- |
+| 可以部署 | Local、WebDAV、OpenList、ANi Open；递归和增量生成；Cron 与本地监听；串行队列、停止和预览；管理界面；HMAC 播放；Local/WebDAV Range 与 OpenList 302；上表中的 Webhook |
+| 实现了，还差真实环境 | 123 官方 API 的权益账号下载与播放；TMDB 的实网 Key、限流和地区差异；Emby/Jellyfin 真实客户端上的 PlaybackInfo 改写 |
+| 还没有 | 夸克、115、天翼、迅雷的原生驱动（前三个可走 OpenList）；Plex 与飞牛的服务器改写；飞牛刷新；首播优化、外部播放器和隐藏推广 |
+
+夸克等网盘在官方文档、测试账号和授权协议齐备之前，继续经 OpenList 使用。本项目不伪造稳定 File ID，也不猜测私有协议字段。
+
+## 安全
 
 > [!CAUTION]
-> `sync_delete` 会删除目标目录中源端已不存在的 `.strm` 和复制文件；Emby 删除同步会删除真实源文件。请先使用独立测试目录、关闭同步删除并检查预览。
+> `sync_delete` 会删除目标目录中源端已不存在的 `.strm` 和复制文件。Emby 删除同步会删除真实源文件。先用独立测试目录，保持同步删除关闭，并看过预览。
 
-工具箱的“清除已验证的 STRM”只删除能用当前密钥验证、同源且源路径属于该任务的 STRM，按文件计数。原始媒体、字幕、海报、旧密钥签名和归属不明的文件会保留；无法解析的稳定 File ID 也会保留。这是保守清理策略，尚未实现完整输出清单；`sync_delete` 仍按扩展名和当前扫描结果清理独占输出目录。
+工具箱里的「清除已验证的 STRM」只删除能用当前密钥验证、且源路径属于该任务的 STRM。原始媒体、字幕、海报、旧密钥签名和归属不明的文件会保留。清理先把候选文件隔离到父目录下权限为 `0700` 的 `.smartstrm-clear-*`，核对内容后再删除；内容已变或原名被占用时，会留下恢复副本。
 
-清理执行会先将候选条目原子隔离到其父目录下权限为 `0700` 的 `.smartstrm-clear-*` 目录，再核对内容与已验证快照一致后删除。内容变化时无覆盖恢复原名；若原名已被新文件占用，则保留隔离副本并返回恢复位置。后续清理及同步删除会跳过这些恢复目录。该机制保护文件名替换竞态，前提是隔离目录由本操作独占，捕获的文件不经已有文件句柄或硬链接并发改写。
+- 管理端口放在可信网络或受控反向代理后面。
+- 配置、备份和历史含有口令、Token 或媒体路径，保持 `0600`。历史默认写在配置文件同目录的 `history.jsonl`。
+- Local 根必须是绝对路径，且不能是文件系统根。容器卷按最小权限挂载。
+- 不要提交 `config.json`、`runtime/`、真实 Webhook 负载或第三方凭据。
+- 漏洞按 [`SECURITY.md`](SECURITY.md) 私下报告。
 
-- 不要直接将管理端口暴露到互联网；应放在可信网络或受控反向代理之后。
-- 配置、备份和历史包含口令、Token、路径或媒体信息，必须保持 `0600`。
-- Local root 必须是绝对、非根目录；容器挂载应遵循最小权限原则。
-- 不要在仓库中提交 `config.json`、`runtime/`、真实 Webhook 负载或第三方凭据。
-- 安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告，不要创建公开 Issue。
+## 开发
 
-## 开发与验证
+要求 Go 1.23、Node.js 22。提交前的完整清单在 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
 ```bash
-find cmd internal -type f -name '*.go' -print0 | xargs -0 gofmt -w
-go mod tidy
-go vet ./...
-go test -race ./...
+make check
+
 cd web && npm ci
-npm run typecheck
-npm run test:unit
-npm run build
-cd ..
-python3 -m json.tool config.example.json >/dev/null
-docker compose config -q
-git diff --check
+npm run typecheck && npm run test:unit && npm run build
 ```
 
-前端要求 Node.js 22。Vite 产物由 `go:embed` 嵌入 Go 二进制，`internal/app/ui/dist/` 是本地生成目录，不提交到 Git。
-
-构建与冒烟：
-
-```bash
-docker compose build smartstrm
-docker compose up -d smartstrm
-curl --fail http://localhost:8024/health
-```
-
-目录结构：
+`make check` 会跑 vet、竞态测试、Markdown 链接、页面样式、示例配置和 Compose 校验。`npm run build` 把 `go:embed` 需要的产物写到 `internal/app/ui/dist/`。这个目录是本地生成的，不提交。
 
 ```text
 cmd/smartstrm/       程序入口
-internal/app/        HTTP API、管理 UI 和集成入口
-internal/config/     严格配置、迁移和敏感字段处理
-internal/storage/    存储驱动与安全路径/协议实现
-internal/task/       调度、监听、生成、插件和任务工具
+internal/app/        HTTP API、管理 UI、Webhook 和集成入口
+internal/config/     严格配置、迁移和敏感字段
+internal/storage/    存储驱动
+internal/task/       调度、监听、生成和任务工具
 internal/tmdb/       TMDB 客户端与受限图片代理
 internal/mediaproxy/ 媒体服务器代理与 PlaybackInfo 改写
 docs/                功能矩阵和外部验证要求
 ```
 
-提交代码前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。项目采用 Conventional Commits、Go 格式化、竞态测试和最小可复现实验服务。
+## 参与
 
-## 已知边界
+- 缺陷：[Bug report](.github/ISSUE_TEMPLATE/bug_report.yml)
+- 功能建议：[Feature request](.github/ISSUE_TEMPLATE/feature_request.yml)
+- 贡献代码：[`CONTRIBUTING.md`](CONTRIBUTING.md)
+- 社区规范：[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- 使用问题：[`SUPPORT.md`](SUPPORT.md)
+- 安全漏洞：[`SECURITY.md`](SECURITY.md)
 
-- 夸克、115、天翼和迅雷仍需通过 OpenList；123 已提供官方开发者 API 驱动，但真实下载/播放取决于账号权益和目录直链设置。
-- 当前驱动不伪造稳定 File ID；不具备可信 File ID API 时使用路径模式。
-- Plex、飞牛影视及特定 Emby/Jellyfin 客户端的深度兼容尚未获得完整真实环境验证。
-- TMDB mock 和浏览器流程已验证，但实网限流、代理和地区响应仍需要真实 API Key。
-- 本项目不会逆向闭源程序、绕过商业许可或猜测私有协议字段。
+## 许可证
 
-## 参与和支持
-
-- Bug 与可复现问题：使用 [Bug report](.github/ISSUE_TEMPLATE/bug_report.yml)
-- 功能建议：使用 [Feature request](.github/ISSUE_TEMPLATE/feature_request.yml)
-- 贡献代码：阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- 社区互动：遵守 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-- 使用支持：参阅 [`SUPPORT.md`](SUPPORT.md)
-- 安全漏洞：阅读 [`SECURITY.md`](SECURITY.md)
-
-## 许可证与归属
-
-本 clean-room 实现以 [GNU Affero General Public License v3.0](LICENSE) 发布。通过网络向用户提供修改后的版本时，也需要遵守 AGPL-3.0 的源码提供义务。
+本实现以 [GNU Affero General Public License v3.0](LICENSE) 发布。通过网络向用户提供修改后的版本时，需要遵守 AGPL-3.0 的源码提供义务。
 
 Copyright © 2025 SmartStrm Clean-room contributors.
 
-第三方组件及容器软件包说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+第三方组件及容器软件包见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
-原 SmartStrm 的名称、图标、截图、公开文档和历史版本说明归其各自权利人所有。本项目仅引用必要的公开版本说明来记录 clean-room 兼容目标，不再分发原项目图标、截图或闭源安装/更新脚本；这不代表官方认可或合作关系。第三方商标归其所有者所有。
+原 SmartStrm 的名称、图标、截图、公开文档和历史版本说明归其各自权利人所有。本项目只引用必要的公开版本说明来记录兼容目标，不再分发原项目图标、截图或闭源安装、更新脚本。第三方商标归其所有者所有。

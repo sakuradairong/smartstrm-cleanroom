@@ -1,8 +1,8 @@
 # GitHub Community Capability Review: STRM Generation, Media Automation, and Cloud Drive Reconciliation
 
-Date: 2026-11-05  
-Status: Completed Research Report  
-Target System: SmartStrm Clean-room (Go Monolith)  
+Date: 2026-11-05\
+Status: Completed Research Report\
+Target System: SmartStrm Clean-room (Go Monolith)\
 Output Path: `docs/research/github-community-capability-review-2026-11-05.md`
 
 ---
@@ -39,32 +39,32 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: Rclone doesn't use a central relational database. Instead, it computes real-time diffs between source and destination remotes using timestamps, file sizes, and hashes ([`fs/sync/sync.go`](https://github.com/rclone/rclone/blob/master/fs/sync/sync.go#L111)). For reproducible synchronization, it accepts manifest input through `--files-from` and supports external comparison trees via `--compare-dest`.
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: The `--dry-run` flag runs the entire directory walk, filter matching, and action planning logic without modifying destination files ([`fs/operations/operations.go`](https://github.com/rclone/rclone/blob/master/fs/operations/operations.go)). It logs planned additions, copies, deletions, and moves with `NOTICE` level tags, giving operators complete visibility into changes before committing them to disk.
 
-3. **Reconciliation and Conservative Cleanup**:  
+3. **Reconciliation and Conservative Cleanup**:\
    *Verified Fact*: Rclone provides industry-leading safety controls during destructive synchronization:
    - `--delete-after`: Defers all file deletions until after every transfer finishes successfully. If any transfer fails, rclone aborts the deletion phase entirely ([`fs/sync/sync.go#L849`](https://github.com/rclone/rclone/blob/master/fs/sync/sync.go#L849)).
    - `--backup-dir`: Instead of unlinking destination files, rclone moves deleted or overwritten files into a designated, timestamped backup directory ([`fs/sync/sync.go#L245`](https://github.com/rclone/rclone/blob/master/fs/sync/sync.go#L245)).
    - `--max-delete <N>`: Caps deletions during execution. In [v1.75.2's `StatsInfo.DeleteFile`](https://github.com/rclone/rclone/blob/v1.75.2/fs/accounting/stats.go), the next deletion returns a fatal error when it would exceed N; up to N files may already have been deleted, and those deletions are not rolled back. Rejecting an oversized deletion plan before any mutation requires a separate preflight phase, as proposed for SmartStrm below.
    - `operations.OverlappingFilterCheck`: Rejects operations where source and destination paths overlap, stopping recursive data destruction before it starts ([`fs/sync/sync.go#L112`](https://github.com/rclone/rclone/blob/master/fs/sync/sync.go#L112)).
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: The `--track-renames` feature matches missing destination files against new source files using file size and hash checksums ([`fs/sync/trackrenames/trackrenames.go`](https://github.com/rclone/rclone/blob/master/fs/sync/trackrenames/trackrenames.go)). When a match occurs, rclone issues a remote rename or server-side move instead of deleting the destination file and re-uploading the source content.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: In addition to CLI operation, rclone provides an RPC daemon (`rclone rcd`) with job IDs, asynchronous task tracking, and cancellation controls via `core/command` and `job/status` endpoints ([`fs/rc/jobs/jobs.go`](https://github.com/rclone/rclone/blob/master/fs/rc/jobs/jobs.go)).
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: The `--fast-list` flag loads directories in large paginated chunks where supported by backend APIs (such as S3 or Google Drive), drastically cutting down HTTP roundtrips. Rclone streams directory entries directly into worker pipelines instead of holding complete directory trees in memory ([`fs/operations/lsjson.go`](https://github.com/rclone/rclone/blob/master/fs/operations/lsjson.go)).
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: Rclone focuses on storage synchronization. It doesn't include native Emby, Jellyfin, or Plex API clients, leaving media server notifications to downstream scripts or wrapper tools.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: Beyond `--backup-dir` and `--max-delete`, rclone enforces `--read-only` mounts, transaction rate limits (`--tpslimit`), bandwidth limits (`--bwlimit`), and isolated filename suffixes (`--suffix`).
 
 ---
@@ -82,28 +82,28 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: AList provides a virtual filesystem over heterogeneous cloud storages. It maintains a database (SQLite, MySQL, or PostgreSQL) storing storage mount configurations, user permissions, and background task records ([`internal/model/task.go`](https://github.com/alist-org/alist/blob/main/internal/model/task.go)). It doesn't write local `.strm` files directly, serving virtual endpoints instead.
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: AList doesn't provide a standalone offline dry-run mode for file operations. The web interface displays real-time task queue status, source and destination paths, and progress percentages for background copy and upload jobs.
 
-3. **Reconciliation and Conservative Cleanup**:  
+3. **Reconciliation and Conservative Cleanup**:\
    *Verified Fact*: Cloud file deletion routes through each driver's `Remove` implementation. Drivers check if the remote provider supports a trash or recycle bin (for example 115 and Aliyun drive). When supported, items move to trash rather than undergoing immediate hard deletion.
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: The driver base interface mandates `Rename` and `Move` methods ([`drivers/base/driver.go`](https://github.com/alist-org/alist/blob/main/drivers/base/driver.go)). Drivers implement native server-side directory moves. When cloud APIs fail mid-operation, partial moves remain on the remote storage without automatic rollback.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: AList implements an asynchronous task queue in [`pkg/task/manager.go`](https://github.com/alist-org/alist/blob/main/pkg/task/manager.go). The manager supports configurable worker pools, task cancellation via Go context, retry policies, and persistent status tracking across restarts.
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: Storage drivers implement paginated directory listings using cursor tokens or page numbers. The frontend uses virtualized scrolling and lazy directory loading to handle directories with tens of thousands of items without freezing the browser DOM.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: AList exposes standard WebDAV and HTTP redirect endpoints. It relies on external reverse proxies or community scripts (such as `emby2Alist`) to intercept media server playback requests.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: AList protects operations with role-based access control, signed download tokens with TTL expiration, path-level permission masks, and API rate limiters.
 
 ---
@@ -121,28 +121,28 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: MoviePilot maintains explicit output ownership using an embedded database table called `TransferHistory` ([`app/db/models/transferhistory.py`](https://github.com/jxxghp/MoviePilot/blob/v2/app/db/models/transferhistory.py)). Each record stores the source path (`src`), source storage, destination path (`dest`), destination storage, transfer mode (`move`, `copy`, `link`, or `softlink`), TMDB ID, media category, file size, and creation timestamp. This ledger enables deterministic tracking of every generated file.
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: When users configure directory scraping or manual organization, MoviePilot previews target directory structures, extracted titles, season and episode numbers, and resulting file names in the web interface before executing filesystem mutations.
 
-3. **Reconciliation and Conservative Cleanup**:  
+3. **Reconciliation and Conservative Cleanup**:\
    *Verified Fact*: MoviePilot's cleanup relies on its transfer database. Because the system knows exactly which files it created, it can remove broken links or obsolete outputs without walking destination folders blindly. It also supports moving obsolete items to the trash folder rather than permanently deleting them.
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: MoviePilot includes transfer redo and history reversal tools ([`app/agent/prompt/transfer_redo.py`](https://github.com/jxxghp/MoviePilot/blob/v2/app/agent/prompt/transfer_redo.py)). If a media item was recognized incorrectly, the operator can trigger a rollback or redo action that reads the historical record, unlinks the generated target, and moves the source file back.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: The system coordinates background workflows using APScheduler and event-driven chains ([`app/chain/transfer.py`](https://github.com/jxxghp/MoviePilot/blob/v2/app/chain/transfer.py)). Tasks run concurrently or sequentially based on worker limits, with execution records preserved in the SQLite database.
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: Directory scans yield file generators to avoid loading whole folder trees into memory. The web UI uses paginated API endpoints to browse transfer history and file collections.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: MoviePilot features first-class Emby, Jellyfin, and Plex integrations ([`app/helper/mediaserver.py`](https://github.com/jxxghp/MoviePilot/blob/v2/app/helper/mediaserver.py)). Upon completing a file transfer, it immediately calls the media server API to refresh only the affected library path (`refresh_library_by_path`), avoiding slow full-library scans.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: MoviePilot enforces minimum file size thresholds (skipping trailers and sample clips), exclusion regex rules, and directory collision checks to ensure target paths never overwrite unrelated files.
 
 ---
@@ -160,29 +160,29 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: Auto_Symlink doesn't maintain an external database ledger for generated symlinks or `.strm` files. It inspects destination directories directly on each run. For symlinks, it reads the link target via `os.readlink`. For `.strm` files, it parses the stored URL ([`autosync/SymlinkChecker.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/autosync/SymlinkChecker.py#L32)).
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: Auto_Symlink lacks an offline dry-run mode. Changes apply directly to disk during scheduled passes or filesystem events.
 
-3. **Reconciliation and Conservative Cleanup**:  
-   *Verified Fact*: In [`autosync/SymlinkChecker.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/autosync/SymlinkChecker.py), `check_and_remove_dead_symlink` removes dead symlinks when the source cloud mount path exists but the specific target file does not. For `.strm` files, it tests the URL with an HTTP request (`check_strm`) before unlinking.  
+3. **Reconciliation and Conservative Cleanup**:\
+   *Verified Fact*: In [`autosync/SymlinkChecker.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/autosync/SymlinkChecker.py), `check_and_remove_dead_symlink` removes dead symlinks when the source cloud mount path exists but the specific target file does not. For `.strm` files, it tests the URL with an HTTP request (`check_strm`) before unlinking.\
    *Design Inference*: The directory cleaner [`autosync/SymlinkDirChecker.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/autosync/SymlinkDirChecker.py) uses `shutil.rmtree`. If an operator misconfigures source or target paths, or if the source cloud mount drops out unexpectedly, entire destination folders risk accidental deletion.
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: The file watcher [`watcher/FileWatcher.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/watcher/FileWatcher.py) listens for inotify `on_moved` events. When a source file is renamed, the watcher updates the destination symlink or `.strm` file directly, avoiding a full rescan of the parent directory.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: Runs periodic synchronization loops in background threads controlled by a simple sleep interval and cron schedule ([`task_run.py`](https://github.com/berry8838/Auto_Symlink_copy/blob/main/task_run.py)).
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: Uses standard Python `os.walk` recursion with a multi-threaded work queue. On large cloud-fuse mounts (such as CloudDrive2 or Rclone mounts), deep directory trees can encounter high latency and memory spikes during recursive traversal.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: Auto_Symlink includes native Emby and Jellyfin API notifications. When a new symlink or `.strm` file is created, it sends an HTTP POST request to the media server library endpoint to trigger automatic rescanning.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: The system verifies that the cloud mount root (`cloud_path`) exists before performing deletions, which guards against unmounted drive wipes. It lacks a configurable maximum deletion threshold or backup staging directory.
 
 ---
@@ -200,28 +200,28 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: This project uses Go and SQLite with GORM. In [`backend/internal/storage/models.go`](https://github.com/konghanghang/openlist-strm/blob/master/backend/internal/storage/models.go), the `File` table records every processed file with `Path`, `Size`, `ModifiedAt`, `Hash`, and `STRMPath`. The `Task` table records task executions with `TaskID`, `Mode`, `FilesCreated`, `FilesDeleted`, and `FilesSkipped`. This provides a clean manifest for all generated `.strm` outputs.
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: Openlist-strm provides dedicated preview endpoints ([`backend/internal/api/handlers_cron_preview_test.go`](https://github.com/konghanghang/openlist-strm/blob/master/backend/internal/api/handlers_cron_preview_test.go)). Operators can simulate scheduled tasks and inspect which files will be created or skipped before triggering real disk writes.
 
-3. **Reconciliation and Conservative Cleanup**:  
+3. **Reconciliation and Conservative Cleanup**:\
    *Verified Fact*: Synchronization runs compare remote file lists against SQLite records. When a remote file is removed, the generator deletes the corresponding local `.strm` file and deletes the record from the database. Because ownership is tied to database IDs, multiple tasks can safely point to different subdirectories without mutual interference.
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: When a file changes on the remote storage, the system updates the SQLite path record and recreates the target `.strm` file. It doesn't yet implement transactional two-stage renames or rollback journals.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: Uses `robfig/cron/v3` in [`backend/internal/scheduler/scheduler.go`](https://github.com/konghanghang/openlist-strm/blob/master/backend/internal/scheduler/scheduler.go). Each task mapping (`Mapping` model) configures its own concurrency limit (`Concurrent`), sync mode (`incremental` or `full`), and STRM URL generation style (`alist_path` or direct `http_url`).
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: The Alist client requests directory listings with pagination and batch inserts records into SQLite to prevent memory bloat during full synchronization passes.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: The system provides generic notification channels (such as webhooks and Telegram alerts in `backend/internal/notification/notification.go`), with direct Emby library refresh planned on its roadmap.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: Per-task concurrency settings prevent flooding cloud storage APIs and triggering rate-limit bans. It requires valid authentication tokens and sanitizes filesystem target paths.
 
 ---
@@ -239,28 +239,28 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: This project acts as an Nginx and NJS reverse proxy rather than a static file generator. It doesn't write local files, so output manifests don't apply. It caches route mappings in Nginx shared memory dictionaries (`ngx.shared.routeL1Dict` and `routeL2Dict`).
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: Configurable log levels (`logLevel: 0/1/2/3` in [`emby2Alist/nginx/conf.d/config/constant-common.js`](https://github.com/bpking1/embyExternalUrl/blob/main/emby2Alist/nginx/conf.d/config/constant-common.js)) allow operators to test URL rewriting in log files before pointing client applications to the proxy.
 
-3. **Reconciliation and Conservative Cleanup**:  
+3. **Reconciliation and Conservative Cleanup**:\
    *Verified Fact*: Because no static files are generated on disk, filesystem reconciliation is unnecessary. Stale routing entries expire automatically through shared memory TTL eviction.
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: Path resolution happens on demand during playback requests. If a remote file moves, the proxy resolves the new path on the next stream attempt.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: Runs as a stateless service with periodic background cache refresh tasks configured via [`emby2Alist/nginx/conf.d/common/periodics.js`](https://github.com/bpking1/embyExternalUrl/blob/main/emby2Alist/nginx/conf.d/common/periodics.js).
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: Bypasses directory scanning completely. By resolving individual items on demand when clients request playback, it operates with zero memory overhead regardless of total media library size.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: Intercepts Emby, Jellyfin, and Plex requests dynamically at `/PlaybackInfo` and `/stream` endpoints ([`emby2Alist/nginx/conf.d/emby.js`](https://github.com/bpking1/embyExternalUrl/blob/main/emby2Alist/nginx/conf.d/emby.js#L14)). It rewrites internal media paths into direct 302 cloud redirects, delivering immediate playback acceleration without waiting for library scans.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: Features a reliable fallback switch (`fallbackUseOriginal` in [`emby2Alist/nginx/conf.d/emby.js#L54`](https://github.com/bpking1/embyExternalUrl/blob/main/emby2Alist/nginx/conf.d/emby.js#L54)). If 302 resolution fails or an upstream cloud API returns an error, the proxy falls back to standard Emby streaming or transcoding, ensuring playback never breaks for the user.
 
 ---
@@ -278,29 +278,29 @@ Every non-obvious technical claim in this document links directly to an official
 
 #### Concrete Capabilities Relevant to SmartStrm
 
-1. **Output Ownership and Manifests**:  
+1. **Output Ownership and Manifests**:\
    *Verified Fact*: Restic establishes immutable output ownership using snapshot manifests ([`internal/data/snapshot.go`](https://github.com/restic/restic/blob/master/internal/data/snapshot.go)). Every backup produces a snapshot referencing a cryptographic tree root ID ([`internal/archiver/tree.go`](https://github.com/restic/restic/blob/master/internal/archiver/tree.go)). State ownership is 100% manifest-driven, verifiable, and immutable.
 
-2. **Dry-Run and Execution Preview**:  
+2. **Dry-Run and Execution Preview**:\
    *Verified Fact*: The `--dry-run` flag is available across `backup`, `forget`, and `prune` operations ([`cmd/restic/cmd_prune.go#L75`](https://github.com/restic/restic/blob/master/cmd/restic/cmd_prune.go#L75)). In prune, it reports exactly how many pack files, blobs, and bytes would be repacked or deleted without altering repository indexes or removing storage blobs.
 
-3. **Reconciliation and Conservative Cleanup**:  
-   *Verified Fact*: Restic implements a two-phase mark-and-sweep garbage collector in [`cmd/restic/cmd_prune.go`](https://github.com/restic/restic/blob/master/cmd/restic/cmd_prune.go). First, it loads all valid snapshot manifests and marks all referenced trees and data blobs. Next, it identifies unreferenced blobs and repackages partially used packs. Finally, it commits new indexes and safely removes unreferenced packs.  
+3. **Reconciliation and Conservative Cleanup**:\
+   *Verified Fact*: Restic implements a two-phase mark-and-sweep garbage collector in [`cmd/restic/cmd_prune.go`](https://github.com/restic/restic/blob/master/cmd/restic/cmd_prune.go). First, it loads all valid snapshot manifests and marks all referenced trees and data blobs. Next, it identifies unreferenced blobs and repackages partially used packs. Finally, it commits new indexes and safely removes unreferenced packs.\
    *Verified Fact*: Prune requires an exclusive repository lock (`openWithExclusiveLock`), preventing concurrent writes from corrupting data ([`cmd/restic/cmd_prune.go#L179`](https://github.com/restic/restic/blob/master/cmd/restic/cmd_prune.go#L179)).
 
-4. **Rename and Recovery Semantics**:  
+4. **Rename and Recovery Semantics**:\
    *Verified Fact*: Restic uses content-defined chunking (Rabin fingerprints). When a file or directory is renamed, chunk IDs remain identical. Restic detects identical chunks across different paths and only stores new tree metadata, taking negligible space and zero blob duplication.
 
-5. **Task Generation and Versioning**:  
+5. **Task Generation and Versioning**:\
    *Verified Fact*: Snapshots carry parent IDs, creation timestamps, hostnames, user tags, and path summaries, providing complete historical versioning of every state generation.
 
-6. **Large-Directory Handling**:  
+6. **Large-Directory Handling**:\
    *Verified Fact*: The archiver streams directory nodes in chunks using [`internal/archiver/tree_saver.go`](https://github.com/restic/restic/blob/master/internal/archiver/tree_saver.go). It avoids loading entire directory hierarchies into RAM, keeping memory usage proportional to directory depth rather than total item count.
 
-7. **Media-Server Refresh**:  
+7. **Media-Server Refresh**:\
    *Verified Fact*: Restic is a general backup program and does not interact with media servers.
 
-8. **Safety Controls**:  
+8. **Safety Controls**:\
    *Verified Fact*: Restic enforces cryptographic integrity checks (`restic check`), append-only backend configurations, lock expiration timeouts, and tolerates configurable unused data limits (`--max-unused`) to minimize churn.
 
 ---
@@ -440,36 +440,36 @@ Between the three candidates, **Candidate 1 is the highest-value architectural i
 
 #### Detailed Justification
 
-1. **Completes the Ownership Model Beyond Current R02 and R03 Protections**:  
+1. **Completes the Ownership Model Beyond Current R02 and R03 Protections**:\
    The October 2026 project review identified R02 and R03 as P1 severity issues. Current overlap validation and signed task-scope cleanup address the immediate unsafe behaviors. A manifest addresses the remaining architectural limitation: SmartStrm still cannot prove historical ownership after task definitions, source mappings, or signing keys change.
 
-2. **Aligns With Proven Community Best Practices**:  
+2. **Aligns With Proven Community Best Practices**:\
    Every mature tool surveyed solves this problem at the ownership layer:
    - Restic relies on snapshot trees so it never deletes unreferenced blobs without proof.
    - MoviePilot logs every output path in its transfer database before finalizing operations.
    - Openlist-strm uses its SQLite `files` table to tie each `.strm` file to its task.
 
-3. **High Compatibility With the Go Monolith**:  
+3. **High Compatibility With the Go Monolith**:\
    SmartStrm is intentionally designed as a single Go binary with zero external service dependencies. A manifest module can be implemented using an atomic append-only JSON-Lines file per task or a lightweight SQLite database. Both options keep deployment trivial, require no external database server, and maintain container startup speeds.
 
-4. **Lays the Foundation for Full Dry-Run and Fast Incremental Runs**:  
+4. **Lays the Foundation for Full Dry-Run and Fast Incremental Runs**:\
    Once SmartStrm maintains a durable manifest of what it owns, it can compare incoming remote directory listings against the manifest without touching the local disk. This makes dry-run previews fast, accurate, and completely side-effect free.
 
 #### Step-by-Step Implementation Roadmap
 
-1. **Phase 1: Manifest Package Definition (`internal/manifest/`)**  
+1. **Phase 1: Manifest Package Definition (`internal/manifest/`)**\
    Create an interface that records `task_id`, `source_path`, `destination_path`, and `generated_at`. Write tests verifying atomic saves, crash resilience, and cross-platform file locking.
 
-2. **Phase 2: Integrate Generator Output Recording**  
+2. **Phase 2: Integrate Generator Output Recording**\
    In `internal/task/generator.go`, update `Generate` to record each newly written `.strm` and copied file into the active task manifest.
 
-3. **Phase 3: Refactor `removeStale` to Reconcile Against Manifest**  
+3. **Phase 3: Refactor `removeStale` to Reconcile Against Manifest**\
    Update `removeStale` so it inspects only files recorded in the task's previous manifest. If a file exists on disk and in the previous manifest, but is absent from the current run's expected set, it is marked for removal. Any file on disk not in the task's manifest is ignored.
 
-4. **Phase 4: Add `max_delete_limit` Safety Gate**  
+4. **Phase 4: Add `max_delete_limit` Safety Gate**\
    Before executing the removals identified in Phase 3, verify that the total number of deletions does not exceed the task's configured threshold. If exceeded, abort with an error and preserve all files.
 
-5. **Phase 5: Expose Manifest in Management UI**  
+5. **Phase 5: Expose Manifest in Management UI**\
    Provide a read-only API endpoint (`/api/tasks/{id}/manifest`) allowing operators to inspect all files owned by a given task directly in the web interface.
 
 ---
